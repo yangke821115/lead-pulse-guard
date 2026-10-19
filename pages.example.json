@@ -1,0 +1,10 @@
+{
+  "111111111111111": {
+    "name": "page-a",
+    "kb": "industrial"
+  },
+  "222222222222222": {
+    "name": "page-b",
+    "kb": "consumer"
+  }
+}

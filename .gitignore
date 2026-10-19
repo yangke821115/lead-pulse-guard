@@ -3,6 +3,7 @@
 *.key
 *.pem
 secrets/
+pages.json
 page-token-*
 *-api-key
 *-app-secret

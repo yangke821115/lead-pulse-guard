@@ -6,6 +6,7 @@ services:
     volumes:
       - ./data/spool:/spool
       - ./secrets/meta-app-secret:/run/secrets/meta_app_secret:ro
+      - ./pages.json:/etc/leadpulse/pages.json:ro
     tmpfs:
       - /tmp
     environment:
@@ -13,6 +14,7 @@ services:
       META_APP_SECRET_FILE: /run/secrets/meta_app_secret
       EVENT_SPOOL_FILE: /spool/events.jsonl
       EVENT_SPOOL_MAX_BYTES: ${EVENT_SPOOL_MAX_BYTES:-33554432}
+      PAGES_CONFIG_FILE: /etc/leadpulse/pages.json
     ports:
       - "127.0.0.1:9000:9000"
     healthcheck:
