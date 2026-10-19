@@ -21,6 +21,7 @@ Politeness loop	A customer replies "thanks" to your answer. The bot answers agai
 Confident fabrication	The model is asked about a spec it does not know, so it produces a plausible number.	Knowledge-base gating: if the fact is not in the approved KB, the model is instructed to defer to a human.
 
 
+
 Architecture
 
    Facebook Page(s)
@@ -157,3 +158,4 @@ Treat this as reference code, not a turnkey product. The gatekeeping logic is wo
 License
 
 MIT. See LICENSE.
+
