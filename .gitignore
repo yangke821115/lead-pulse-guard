@@ -4,6 +4,7 @@
 *.pem
 secrets/
 pages.json
+lead-form-fields.json
 page-token-*
 *-api-key
 *-app-secret
@@ -16,6 +17,9 @@ spool/
 *.sqlite3
 pending.json
 spool-offset.json
+dm-history.json
+dm-memory.json
+chat-routing.json
 
 # runtime
 __pycache__/
@@ -27,6 +31,8 @@ venv/
 # knowledge bases — customer-specific content
 kb/*
 !kb/example/
+worker/kb/*
+!worker/kb/example/
 
 # OS
 .DS_Store

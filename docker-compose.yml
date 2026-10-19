@@ -28,3 +28,27 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  worker:
+    build: ./worker
+    restart: unless-stopped
+    depends_on:
+      - gateway
+    volumes:
+      - ./data/spool:/var/lib/leadpulse/spool
+      - ./data/state:/var/lib/leadpulse/state
+      - ./secrets:/etc/leadpulse:ro
+    environment:
+      LPW_BASE: /app/worker
+      LPW_SECRETS: /etc/leadpulse
+      LPW_GRAPH_SECRETS: /etc/leadpulse/graph
+      LPW_STATE: /var/lib/leadpulse/state
+      AIW_SPOOL: /var/lib/leadpulse/spool/events.jsonl
+      AIW_POST_ENABLED: ${AIW_POST_ENABLED:-false}
+      AIW_DOMAIN_ENUM: ${AIW_DOMAIN_ENUM:-general,other}
+      AIW_FORM_FIELDS: /app/worker/lead-form-fields.json
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

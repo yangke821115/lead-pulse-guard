@@ -1,0 +1,4 @@
+# 唯一的外部依赖。其余全部是标准库。
+# 注意：本项目的 larklite.py 用极简垫片替换了 lark_oapi 的默认实现，
+# 避免 SDK 在 import 时加载全部 REST 端点（实测可省约 120MB 常驻内存）。
+lark-oapi==1.7.3

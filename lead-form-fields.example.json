@@ -1,0 +1,11 @@
+{
+  "product_map": {
+    "widget_basic": "基础款",
+    "widget_pro": "专业款"
+  },
+  "product_label_en": {
+    "widget_basic": "Basic Model",
+    "widget_pro": "Professional Model"
+  },
+  "product_options": ["基础款", "专业款", "其他/待确认"]
+}
