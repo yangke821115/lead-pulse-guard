@@ -1,0 +1,28 @@
+services:
+  gateway:
+    build: ./gateway
+    restart: unless-stopped
+    read_only: true
+    volumes:
+      - ./data/spool:/spool
+      - ./secrets/meta-app-secret:/run/secrets/meta_app_secret:ro
+    tmpfs:
+      - /tmp
+    environment:
+      META_VERIFY_TOKEN: ${META_VERIFY_TOKEN:?set META_VERIFY_TOKEN in .env}
+      META_APP_SECRET_FILE: /run/secrets/meta_app_secret
+      EVENT_SPOOL_FILE: /spool/events.jsonl
+      EVENT_SPOOL_MAX_BYTES: ${EVENT_SPOOL_MAX_BYTES:-33554432}
+    ports:
+      - "127.0.0.1:9000:9000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9000/health', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
