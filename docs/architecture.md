@@ -2,13 +2,33 @@
 
 ## The shape of the problem
 
-A Facebook Page receives comments. Meta delivers them to a single HTTPS endpoint as webhook events. The vendor wants an LLM to draft a reply, and a human to approve it.
+Leads arrive through three unrelated channels: comments on a Facebook Page, Lead Ads form submissions, and plain
+email. Each has a different delivery mechanism and a different failure mode. The vendor wants an LLM to draft the
+response, and a human to approve it.
 
 Everything else in this document follows from three constraints:
 
 1. **The webhook endpoint is public.** Anyone on the internet can POST to it. Signature verification is not optional.
 2. **The webhook endpoint can be spoofed into triggering a publish.** If it is compromised, the blast radius must be "someone can write a line to a file", not "someone can post as the brand".
 3. **Replies are public and permanent.** A wrong number in a public comment costs more than a slow reply. So the model must never be the last step.
+
+## Three entrances, one queue
+
+| Entrance | Transport | What the payload is | What can go wrong |
+|---|---|---|---|
+| `feed` / `comment` | webhook | the comment inline | our own replies come back as events |
+| `leadgen` | webhook + Graph fetch | only an ID; the fields must be fetched | the event is never delivered at all |
+| mailbox | IMAP poll | a full MIME message | nothing, as long as the poll runs |
+
+The design keeps two things separated:
+
+- **Normalisation** happens per channel. A comment, a lead and an email become three different internal event shapes,
+  because they genuinely are different things.
+- **Decision logic** happens once. Eligibility, dedupe and approval are shared, so a comment cannot be treated one way
+  when it arrives from Meta and another way when it arrives from the poller.
+
+That second point is what makes the fallback pollers safe to add. The comment poller does not decide anything itself —
+it re-signs the comment as a webhook and posts it to the gateway, so all the reasoning stays in one file.
 
 ## Two processes, one file
 
@@ -100,6 +120,35 @@ If you outgrow these, replace the spool with a broker — but keep the gateway's
 | `missing_comment_id` | malformed event |
 
 The gateway logs the decision either way. `reply: false` does not mean the event is dropped — it means no *card with buttons* is raised.
+
+## Delivery is not guaranteed
+
+Webhooks are best-effort. On 2026-10-13 five Lead Ads submissions arrived; two produced a webhook event, three did
+not. No error, no log line, no retry. From the receiving side a broken feed and a quiet day look identical.
+
+The mitigation is not "retry harder", because there is nothing to retry — the event never existed for us. It is a
+second, independent read path:
+
+```
+webhook ──┐
+          ├──► claim(activity_id)  ──► process  ──► one card
+poller  ──┘     atomic; loser no-ops
+```
+
+The claim is a conditional insert in the local store. Whichever path arrives first marks the ID; the other finds it
+claimed and exits silently. This is what makes it safe to run both paths at full speed without coordinating them.
+
+Polling intervals are a deliberate trade: 10 minutes is short enough that a lead is still warm, long enough that the
+API cost is irrelevant (four Graph calls per cycle). Tightening it further buys little — the comment poller in
+particular has to list posts before it can list comments, so its cost scales with page activity, not with the
+interval.
+
+### What the pollers must not do
+
+A poller that reimplements the decision logic will drift from the webhook path. The comment poller therefore
+re-serialises each comment into a signed webhook payload and feeds it to the gateway's own endpoint. Expensive and
+slightly absurd-looking; but it means there is exactly one implementation of "should we reply to this", and it is the
+one that has the tests.
 
 ## Eligibility: the two-loop model
 

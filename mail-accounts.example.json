@@ -1,0 +1,10 @@
+{
+  "accounts": [
+    {
+      "address": "sales@example.com",
+      "password_file": "mail-pw-example",
+      "page_id": "111111111111111",
+      "label": "示例业务线"
+    }
+  ]
+}

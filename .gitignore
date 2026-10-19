@@ -5,6 +5,7 @@
 secrets/
 pages.json
 lead-form-fields.json
+mail-accounts.json
 page-token-*
 *-api-key
 *-app-secret

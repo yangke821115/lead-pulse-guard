@@ -1,4 +1,5 @@
 """路径与运行参数。所有凭据都从文件读，绝不进环境变量或命令行。"""
+import json
 import os
 
 BASE = os.environ.get("LPW_BASE", "/opt/leadpulse/worker")
@@ -96,3 +97,31 @@ LEAD_CONTEXT = os.environ.get(
 # 表单选项 -> 内部名称的映射。留空则原样透传。见 lead-form-fields.example.json
 FORM_FIELDS_FILE = os.environ.get(
     "AIW_FORM_FIELDS", os.path.join(BASE, "lead-form-fields.json"))
+
+
+def pages():
+    """返回 [(page_id, 显示名, 知识库 slug)]。
+
+    优先读 pages.json；文件不存在时退化为扫描令牌目录 —— 这样最少只需要
+    放好令牌就能跑，不必再维护一份重复的主页清单。
+    """
+    config_file = os.environ.get("PAGES_CONFIG_FILE",
+                                 os.path.join(SECRETS, "pages.json"))
+    try:
+        with open(config_file, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        if isinstance(data, dict) and data:
+            return [(str(pid), (val or {}).get("name") or str(pid),
+                     (val or {}).get("kb") or "")
+                    for pid, val in data.items()]
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+
+    try:
+        names = sorted(os.listdir(GRAPH_SECRETS))
+    except OSError:
+        return []
+    return [(n[len("page-token-"):], n[len("page-token-"):], "")
+            for n in names if n.startswith("page-token-")]
