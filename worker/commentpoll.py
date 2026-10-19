@@ -111,6 +111,11 @@ def post_to_gateway(secret, payload):
 
 
 def main():
+    if not PAGES:
+        log("[ERROR] 没有可轮询的主页：pages.json 缺失，且 %s 下没有 page-token-*"
+            % TOKEN_DIR)
+        return 1
+
     secret = open(APP_SECRET_FILE).read().strip()
     known = seen_ids()
     cutoff = int(time.time()) - WINDOW

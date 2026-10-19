@@ -186,11 +186,57 @@ It also does not do lead scraping, does not touch Instagram DMs, and does not at
 
 ## Status
 
-Running in production on two industrial B2B Pages since September 2026. Roughly 30k events processed. The design decisions in `docs/security.md` are all answers to something that actually broke.
+Running in production on several industrial B2B Pages since September 2026. Roughly 30k events processed. The design decisions in `docs/security.md` are all answers to something that actually broke.
 
 Treat this as **reference code**, not a turnkey product. The gatekeeping logic is worth copying; the deployment specifics will need adapting.
 
 ---
+
+## Sponsorship
+
+This project is MIT-licensed and will stay that way. Sponsorship does not buy a different licence, priority
+support, or a vote on the roadmap — everything in this repository is already given away, and paid work is a
+separate thing (see below).
+
+Sponsorship pays for the parts that nobody enjoys doing and everybody depends on:
+
+| What it funds | Why it matters |
+|---|---|
+| **Correctness work** — signature edge cases, poller idempotency, mutation tests | A filter that is silently inverted still returns HTTP 200 and still looks healthy |
+| **A demo instance with a Meta test app** | Some failures only appear against a real app: duplicate deliveries, reordered events, a webhook that simply never arrives |
+| **Keeping the docs true** | A README describing a system that no longer exists is worse than no README |
+
+### How to sponsor
+
+The repository is being prepared for its first public release, so the sponsorship pages are not live yet. Planned
+channels:
+
+| Channel | Suited to |
+|---|---|
+| GitHub Sponsors | recurring, international |
+| 爱发电 | recurring / one-off, mainland China |
+| Invoice / 对公转账 | companies that need a receipt |
+
+If you want to support it before those are live, open an issue — we will follow up.
+
+### For companies
+
+If you run B2B lead generation on Facebook or by email and want this adapted to your own Pages and mailboxes, we do
+paid setup and hosting as a service. That is also where most of the failure modes in this repository came from: real
+traffic, not synthetic tests.
+
+**What sponsorship does not include:** a licence change, support guarantees, or influence over what gets built. Those
+are not for sale here.
+
+### If you cannot sponsor
+
+Tell us about a failure we have not handled. A report that says *"the event arrived, no card was pushed, here is the
+timestamp and the page ID"* is worth more than the money — it turns into a test case that keeps the bug from coming
+back.
+
+### Sponsors
+
+None yet. This section will list sponsors once the channels are live.
 
 ## License
 

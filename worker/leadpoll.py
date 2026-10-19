@@ -86,6 +86,13 @@ def leads_of_form(page_token, form_id):
 
 
 def main():
+    # 空清单不是「没事可做」，而是「配置没生效」。静默退出会让服务显示成功的
+    # 同时一条线索都不查 —— 那正是这个项目想消灭的那种失败。
+    if not PAGES:
+        log("[ERROR] 没有可轮询的主页：pages.json 缺失，且 %s 下没有 page-token-*"
+            % TOKEN_DIR)
+        return 1
+
     failed, seen, fresh = 0, 0, []
 
     for page_id, page_name, kb in PAGES:
