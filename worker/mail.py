@@ -1,14 +1,14 @@
-"""邮箱监控：只读轮询 IMAP，把新客户来信推成飞书通知卡。
+"""Email monitoring: read-only IMAP polling that pushes new customer emails as Lark notification cards.
 
-设计取舍（每条都是踩过坑的结果）：
-- 只读：一律用 BODY.PEEK，不标已读、不移动、不删除，绝不改变邮箱状态
-- 首次运行以当前最大 UID 为基线，不倒灌历史邮件（否则一上线就被几千封淹没）
-- **同时读 INBOX 与「已发送」**：只看来信会得出「没人处理」的错误结论 ——
-  「客户是否已被回复」的权威数据源是 Sent，不是 INBOX
-- 去重双保险：UID 水位 + Message-ID 集合，跨重启持久化
-- **投递确认**：每封的处理结果都写状态文件，避免「以为推了其实没推」
-- 分类不确定一律判为「非垃圾」：漏掉真客户的代价远大于多推一张卡片
-- 连续失败要吵：单账号超阈值推告警卡；全部账号长期失败则退出让 systemd 重启
+Design tradeoffs (each one the result of a hard-learned lesson):
+- Read-only: always use BODY.PEEK, never mark read, move, or delete — never change mailbox state
+- First run baselines on the current max UID, no backfilling of history (otherwise thousands of emails flood in on launch)
+- **Read both INBOX and Sent**: looking only at incoming mail leads to the wrong conclusion of "nobody handled it" —
+  the authoritative source for "has the customer been replied to" is Sent, not INBOX
+- Dedupe double insurance: UID watermark + Message-ID set, persisted across restarts
+- **Delivery confirmation**: write each email's result to a state file, avoiding "thought it was pushed but it wasn't"
+- When classification is uncertain, always judge as "not spam": missing a real customer costs far more than an extra card
+- Failures must be loud: push an alert card when a single account exceeds the threshold; exit to let systemd restart when all accounts fail long-term
 """
 import email
 import email.utils
@@ -23,7 +23,7 @@ import sys
 import time
 from email.header import decode_header
 
-from . import config, feishu, llm
+from . import config, feishu, i18n, llm
 
 log = logging.getLogger("mail")
 
@@ -57,7 +57,7 @@ MAX_SEND_RETRY = int(os.environ.get("AIW_MAIL_SEND_RETRY", "3"))
 ALERT_COOLDOWN = 6 * 3600
 
 
-# ---------------- 状态 ----------------
+# ---------------- State ----------------
 
 def _load_state():
     try:
@@ -66,7 +66,7 @@ def _load_state():
     except FileNotFoundError:
         return {}
     except Exception as exc:
-        log.warning("状态文件损坏，按空状态处理（会重做基线，不会重复推送）：%s", exc)
+        log.warning("State file corrupted, treating as empty state (baseline will be redone, no duplicate pushes): %s", exc)
         return {}
 
 
@@ -81,7 +81,7 @@ GLOBAL_SEEN_KEY = "_global_seen"
 
 
 def _global_seen(state):
-    """跨账号去重表：同一封信若同时送到多个监控邮箱，只推一次卡。"""
+    """Cross-account dedupe table: if the same email arrives at multiple monitored mailboxes, push only one card."""
     return set(state.get(GLOBAL_SEEN_KEY) or [])
 
 
@@ -94,7 +94,7 @@ def _global_seen_add(state, key):
 
 
 def _push_rec(bucket, key, rec, limit):
-    """往有界列表里追加一条记录（投递确认 / 已发送历史都靠它）。"""
+    """Append a record to a bounded list (used for both delivery confirmation and sent history)."""
     lst = bucket.setdefault(key, [])
     lst.append(rec)
     if len(lst) > limit:
@@ -108,7 +108,7 @@ def load_accounts():
     for acct in cfg.get("accounts") or []:
         password = config.read_secret(acct["password_file"])
         if not password:
-            raise RuntimeError("密码文件为空: %s" % acct["password_file"])
+            raise RuntimeError("Password file is empty: %s" % acct["password_file"])
         out.append({
             "address": acct["address"],
             "password": password,
@@ -118,7 +118,7 @@ def load_accounts():
     return out
 
 
-# ---------------- 邮件解析 ----------------
+# ---------------- Email parsing ----------------
 
 def _decode(value):
     if not value:
@@ -145,6 +145,7 @@ def _strip_html(text):
 
 _QUOTE_MARKERS = (
     re.compile(r"^\s*On .{5,80}\bwrote:", re.I),
+    # Bilingual: match both English and Chinese mail-client headers.
     re.compile(r"^\s*-{2,}\s*(原始邮件|Original Message)\s*-{2,}", re.I),
     re.compile(r"^\s*(发件人|From)\s*[:：]"),
     re.compile(r"^\s*_{10,}\s*$"),
@@ -152,7 +153,7 @@ _QUOTE_MARKERS = (
 
 
 def _trim_quotes(text):
-    """砍掉回复引用，只留新内容 —— 否则噪音会淹没模型和卡片。"""
+    """Strip quoted reply content, keep only the new content — otherwise the noise drowns the model and the card."""
     kept = []
     for line in (text or "").splitlines():
         if any(p.search(line) for p in _QUOTE_MARKERS):
@@ -198,9 +199,9 @@ def _local_time(value):
     try:
         dt = email.utils.parsedate_to_datetime(value)
     except Exception:
-        return "(时间未知)"
+        return "(time unknown)"
     if dt is None:
-        return "(时间未知)"
+        return "(time unknown)"
     import datetime as _dt
     try:
         if dt.tzinfo is None:
@@ -230,11 +231,11 @@ def _parse(raw, uid):
     }
 
 
-# ---------------- 内部邮件拦截 ----------------
+# ---------------- Internal mail interception ----------------
 
-# 自有域名：发件人属于这些域名时，视为「我们自己发出的邮件」，不推卡片。
-# 刻意不从账号表推导 —— 防止将来新增外部代管账号时判定范围被静默放大。
-# 配置方式：AIW_MAIL_OWN_DOMAINS="example.com,example.org"
+# Own domains: when the sender belongs to these domains, treat it as "mail we sent ourselves" and don't push a card.
+# Deliberately not derived from the account table — prevents the scope from silently widening if externally managed accounts are added later.
+# Configuration: AIW_MAIL_OWN_DOMAINS="example.com,example.org"
 OWN_DOMAINS = tuple(d.strip().lower()
                     for d in os.environ.get("AIW_MAIL_OWN_DOMAINS", "").split(",")
                     if d.strip())
@@ -247,50 +248,53 @@ def _domain_of(addr):
 
 
 def is_internal_mail(mail):
-    """内部邮件 = 发件人属于自有域名，即「这封信是我们自己发出的」。
+    """Internal mail = sender belongs to an own domain, i.e. "this message was sent by us".
 
-    2026-10-13 修订：原规则要求发件人与收件人「同属」自有域名，
-    结果我们发给客户的邮件（To 是客户、我们只在 Cc / Bcc）被判成
-    外部来信，推了卡片到飞书群。改为只看发件人 —— 我方销售邮箱
-    不会收到自己同事的询盘。
+    2026-10-13 revision: the original rule required sender and recipient to both
+    belong to an own domain, so mail we sent to customers (To is the customer, we're
+    only on Cc / Bcc) was classified as external incoming mail and pushed a card to
+    the Lark chat. Changed to look only at the sender — our sales mailbox
+    won't receive leads from its own colleagues.
 
-    这是确定性规则，不交给 LLM 猜 —— 内部邮件不该消耗模型调用，
-    也不该有「模型这次没判对」的风险。
+    This is a deterministic rule, not left to the LLM to guess — internal mail shouldn't
+    consume model calls, nor carry the risk of "the model got it wrong this time".
     """
     frm = _domain_of(mail.get("from_addr"))
     if frm in OWN_DOMAINS:
-        return True, "内部邮件（我方发出：%s）" % (mail.get("from_addr") or "")
+        return True, "Internal mail (sent by us: %s)" % (mail.get("from_addr") or "")
     return False, ""
 
 
-# ---------------- 分诊 ----------------
+# ---------------- Triage ----------------
 
-CLASSIFY_SYSTEM = """你是外贸公司的邮件分诊助手。收到一封发到公司销售邮箱的邮件，请判断：
+CLASSIFY_SYSTEM = """You are the email triage assistant for an export company. A message arrives in a sales mailbox. Decide:
 
-1) is_spam：是否为「非客户来信」。属于垃圾的只有这几类：
-   B2B 推销与冷邮件（lead generation、代做 SEO、建站、代运营、卖邮箱列表）、
-   钓鱼与诈骗、系统通知、广告、订阅退订通知。
-   ⚠️ 真实客户的询价、技术咨询、售后、抱怨投诉、合作洽谈、代理申请，
-   一律【不算】垃圾。判断不确定时取 false —— 漏掉真客户远比多推一条通知严重。
+1) is_spam: is this a non-customer message? Only these count as spam:
+   B2B cold outreach (lead generation, SEO, website building, agency services, email lists),
+   phishing and scams, system notifications, ads, subscription/unsubscribe notices.
+   ⚠️ Real customer inquiries, technical questions, after-sales, complaints, partnership requests,
+   and distributor applications are NOT spam. When unsure, return false — missing a real customer
+   is far worse than one extra notification.
 
-2) domain：内容主题，只能取以下值之一：
+2) domain: topic; must be one of:
 @@DOMAIN_GUIDE@@
 
-3) intent：只能取 "询价" / "技术咨询" / "售后" / "合作" / "其他"
-4) urgency：只能取 "高"（有明确采购需求或时限）/ "中" / "低"
-5) summary：一句话中文摘要，不超过 60 字，只描述来信内容本身，不得编造。
+3) intent: one of "quote" / "technical" / "after_sales" / "partnership" / "other"
+4) urgency: one of "high" (clear purchase intent or deadline) / "medium" / "low"
+5) summary: one-sentence summary in English, under 60 words, describing only the message itself; do not invent.
 
-即使判定为垃圾邮件，domain/intent/summary 也要照实填写。
+Even if judged spam, still fill domain/intent/summary truthfully.
 
-只输出 JSON，不要任何解释或 markdown 代码块：
-{"is_spam": false, "domain": "@@DOMAIN_ONE@@", "intent": "询价", "urgency": "高", "summary": "..."}"""
+Return JSON only — no explanation, no markdown fences:
+{"is_spam": false, "domain": "@@DOMAIN_ONE@@", "intent": "quote", "urgency": "high", "summary": "..."}"""
 
 
 def _classify_system():
-    """把主题枚举与说明填进提示词。
+    """Fill the topic enum and guide into the prompt.
 
-    与 llm.py 用同一套占位符约定：主题清单来自 AIW_DOMAIN_ENUM /
-    AIW_DOMAIN_GUIDE，因此换业务只需要改环境变量，不用改代码。
+    Uses the same placeholder convention as llm.py: the topic list comes from
+    AIW_DOMAIN_ENUM / AIW_DOMAIN_GUIDE, so switching business only requires
+    changing environment variables, not code.
     """
     domains = [d.strip() for d in config.DOMAIN_ENUM.split(",") if d.strip()]
     guide = config.DOMAIN_GUIDE.strip() or "\n".join(
@@ -321,9 +325,9 @@ def _llm_json(system, user, max_tokens=700, temperature=0.2):
             choice = body["choices"][0]
             content = choice["message"]["content"] or ""
             if choice.get("finish_reason") == "length":
-                raise RuntimeError("输出被 max_tokens 截断")
+                raise RuntimeError("Output truncated by max_tokens")
             if not content.strip():
-                raise RuntimeError("返回空内容")
+                raise RuntimeError("Returned empty content")
             text = content.strip()
             if text.startswith("```"):
                 text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
@@ -331,26 +335,26 @@ def _llm_json(system, user, max_tokens=700, temperature=0.2):
             return json.loads(text)
         except Exception as exc:
             errors.append("%s: %s" % (model, exc))
-    raise RuntimeError("全部模型失败：" + " | ".join(errors))
+    raise RuntimeError("All models failed:" + " | ".join(errors))
 
 
 def classify(mail):
-    user = "发件人：%s <%s>\n主题：%s\n正文：\n%s" % (
-        mail["from_name"] or "(无名)", mail["from_addr"],
-        mail["subject"] or "(无主题)", mail["body"] or "(无正文)")
+    user = "From: %s <%s>\nSubject: %s\nBody:\n%s" % (
+        mail["from_name"] or "(no name)", mail["from_addr"],
+        mail["subject"] or "(no subject)", mail["body"] or "(no body)")
     out = _llm_json(CLASSIFY_SYSTEM, user)
-    out.setdefault("is_spam", False)          # 缺字段时偏向「不是垃圾」
-    out.setdefault("domain", "其他")
-    out.setdefault("intent", "其他")
-    out.setdefault("urgency", "中")
+    out.setdefault("is_spam", False)          # When fields are missing, lean toward "not spam"
+    out.setdefault("domain", "other")
+    out.setdefault("intent", "other")
+    out.setdefault("urgency", "medium")
     out.setdefault("summary", "")
     return out
 
 
-# ---------------- 路由 ----------------
+# ---------------- Routing ----------------
 
 def chat_for_domain(domain, page_id):
-    """内容主题优先于收件地址 —— 询盘可能发到另一个业务线的邮箱。"""
+    """Content topic takes precedence over recipient address — a lead may be sent to another business line's mailbox."""
     cfg = feishu.load_routing()
     routes = cfg.get("routes") or {}
     pid = str(page_id or "")
@@ -370,7 +374,7 @@ def chat_for_domain(domain, page_id):
     return feishu.chat_id(), "single-chat-fallback"
 
 
-# ---------------- 卡片 ----------------
+# ---------------- Card ----------------
 
 _PALETTE = ("blue", "turquoise", "purple", "orange", "green", "wathet")
 _DOMAINS = [d.strip() for d in config.DOMAIN_ENUM.split(",") if d.strip()]
@@ -378,7 +382,7 @@ _DOMAIN_COLOR = {d: _PALETTE[i % len(_PALETTE)] for i, d in enumerate(_DOMAINS)}
 
 
 def sent_history(st, addr):
-    """在该账号的「已发送」记录里找有没有回过这个地址。"""
+    """Look in this account's "Sent" records for whether we've replied to this address."""
     addr = (addr or "").lower()
     if not addr or not st:
         return []
@@ -387,29 +391,29 @@ def sent_history(st, addr):
 
 
 def build_mail_card(acct, mail, triage, st=None, test=False):
-    domain = triage.get("domain") or "其他"
-    title = "📧 新客户来信 · %s" % domain
+    domain = triage.get("domain") or "other"
+    title = "📧 New customer email · %s" % domain
     if test:
-        title = "🧪 测试 · " + title
-    lines = ["**收件箱：** %s" % acct["label"]]
-    lines.append("**发件人：** %s" % (mail["from_name"] or "(无名)"))
-    lines.append("**邮箱：** `%s`" % mail["from_addr"])
-    lines.append("**时间：** %s（北京时间）" % mail["local_time"])
+        title = "🧪 Test · " + title
+    lines = ["**Mailbox:** %s" % acct["label"]]
+    lines.append("**From:** %s" % (mail["from_name"] or "(no name)"))
+    lines.append("**Email:** `%s`" % mail["from_addr"])
+    lines.append("**Time:** %s (Beijing time)" % mail["local_time"])
     if mail["subject"]:
-        lines.append("**主题：** %s" % mail["subject"])
-    body = (mail["body"] or "（无正文）")[:CARD_BODY_CHARS]
-    lines.append("**正文：**\n> %s" % body.replace("\n", "\n> "))
+        lines.append("**Subject:** %s" % mail["subject"])
+    body = (mail["body"] or "(no body)")[:CARD_BODY_CHARS]
+    lines.append("**Body:**\n> %s" % body.replace("\n", "\n> "))
     lines.append("---")
-    lines.append("**AI 分诊：** 主题=%s　意图=%s　紧急度=%s" % (
-        domain, triage.get("intent") or "其他", triage.get("urgency") or "中"))
+    lines.append("**AI triage:** topic=%s　intent=%s　urgency=%s" % (
+        domain, i18n.label("intent", triage.get("intent")), i18n.label("priority", triage.get("urgency"))))
     if triage.get("summary"):
         lines.append(triage["summary"])
     hist = sent_history(st, mail["from_addr"])
     if hist:
-        lines.append("**往来记录：** 已发送里查到此地址 **%d** 次，最近一次 %s"
+        lines.append("**History:** found this address **%d** times in Sent, last %s"
                      % (len(hist), hist[-1].get("ts") or "?"))
     else:
-        lines.append("**往来记录：** 已发送里查不到对此地址的回复（疑似首次）")
+        lines.append("**History:** no reply to this address in Sent (likely first contact)")
     return {
         "schema": "2.0",
         "config": {"update_multi": True},
@@ -420,7 +424,7 @@ def build_mail_card(acct, mail, triage, st=None, test=False):
 
 
 def _log_filtered(acct, mail, triage, reason):
-    """被过滤的邮件必须留痕 —— 分类错了要能查回来，不能凭空消失。"""
+    """Filtered mail must leave a trace — misclassifications need to be recoverable, not vanish into thin air."""
     rec = {"ts": time.strftime("%Y-%m-%d %H:%M:%S"),
            "account": acct["address"], "label": acct["label"],
            "from": "%s <%s>" % (mail["from_name"], mail["from_addr"]),
@@ -430,7 +434,7 @@ def _log_filtered(acct, mail, triage, reason):
         with open(FILTERED_LOG, "a", encoding="utf-8") as handle:
             handle.write(json.dumps(rec, ensure_ascii=False) + "\n")
     except Exception as exc:
-        log.warning("写过滤日志失败：%s", exc)
+        log.warning("Failed to write filter log: %s", exc)
 
 
 # ---------------- IMAP ----------------
@@ -443,7 +447,7 @@ def _connect(acct):
 
 
 def _find_sent_folder(M):
-    """名字带空格的文件夹在 imaplib 里必须加引号，否则 BAD EXAMINE parameters!"""
+    """Folders with spaces in the name must be quoted in imaplib, otherwise BAD EXAMINE parameters!"""
     typ, boxes = M.list()
     for box in boxes or []:
         raw = box.decode(errors="replace")
@@ -481,13 +485,13 @@ def _poll_inbox(acct, state, opts):
             st["last_uid"] = top
             st.setdefault("seen", [])
             _save_state(state)
-            log.info("[%s] 收件箱首次运行，基线 UID=%s，不回推历史邮件", addr, top)
+            log.info("[%s] Inbox first run, baseline UID=%s, not pushing historical emails", addr, top)
             return 0
 
         floor = 0 if opts.get("backfill") else int(st.get("last_uid") or 0)
         pending = [u for u in uids if u > floor]
         if len(pending) > MAX_FETCH:
-            log.warning("[%s] 待处理 %d 封，本轮只取最早 %d 封（防雪崩）",
+            log.warning("[%s] %d pending, this round only takes the earliest %d (avalanche prevention)",
                         addr, len(pending), MAX_FETCH)
             pending = pending[:MAX_FETCH]
 
@@ -497,7 +501,7 @@ def _poll_inbox(acct, state, opts):
         for uid in pending:
             raw = _fetch_raw(M, uid)
             if not raw:
-                log.warning("[%s] UID %s 取不到内容，跳过", addr, uid)
+                log.warning("[%s] UID %s content unavailable, skipping", addr, uid)
                 st["last_uid"] = uid
                 _save_state(state)
                 continue
@@ -505,8 +509,8 @@ def _poll_inbox(acct, state, opts):
             mail = _parse(raw, uid)
             key = mail["message_id"] or ("uid:%s@%s" % (uid, addr))
             if key in seen or key in gseen:
-                where = "本账号" if key in seen else "其他账号"
-                log.info("[%s] UID %s 已在%s处理过（%s），跳过",
+                where = "this account" if key in seen else "other accounts"
+                log.info("[%s] UID %s already processed in %s (%s), skipping",
                          addr, uid, where, key[:40])
                 st["last_uid"] = uid
                 _save_state(state)
@@ -520,7 +524,7 @@ def _poll_inbox(acct, state, opts):
                     "uid": uid, "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
                     "from": mail["from_addr"], "subject": mail["subject"],
                     "outcome": "filtered", "reason": "internal"}, PROCESSED_KEEP)
-                log.info("[%s] UID %s %s，只记日志不推卡片：%s",
+                log.info("[%s] UID %s %s, logging only without pushing card: %s",
                          addr, uid, why, (mail["subject"] or "")[:60])
                 seen.add(key)
                 _global_seen_add(state, key)
@@ -539,13 +543,13 @@ def _poll_inbox(acct, state, opts):
                     "from": mail["from_addr"], "subject": mail["subject"],
                     "outcome": "filtered", "reason": "is_spam",
                     "triage": triage}, PROCESSED_KEEP)
-                log.info("[%s] UID %s 判定为推销/垃圾，只记日志不推卡片：%s",
+                log.info("[%s] UID %s classified as promotion/spam, logging only without pushing card: %s",
                          addr, uid, (mail["subject"] or mail["from_addr"])[:60])
             else:
                 to, how = chat_for_domain(triage.get("domain"), acct["page_id"])
                 card = build_mail_card(acct, mail, triage, st)
                 if opts.get("dry_run"):
-                    log.info("[%s] DRY-RUN 本应推送：%s", addr,
+                    log.info("[%s] DRY-RUN would have pushed: %s", addr,
                              json.dumps(card, ensure_ascii=False)[:400])
                     _push_rec(st, "processed", {
                         "uid": uid, "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -560,7 +564,7 @@ def _poll_inbox(acct, state, opts):
                             "from": mail["from_addr"], "subject": mail["subject"],
                             "outcome": "delivered", "chat": to, "how": how,
                             "message_id": mid, "triage": triage}, PROCESSED_KEEP)
-                        log.info("[%s] 已推送来信：%s ｜ %s ｜ 群=%s(%s) ｜ message_id=%s",
+                        log.info("[%s] Pushed incoming mail: %s | %s | group=%s(%s) | message_id=%s",
                                  addr, mail["from_addr"],
                                  triage.get("summary") or mail["subject"],
                                  to[:12], how, mid)
@@ -576,15 +580,15 @@ def _poll_inbox(acct, state, opts):
                             "attempts": attempts, "chat": to,
                             "error": str(exc)[:200], "triage": triage},
                             PROCESSED_KEEP)
-                        log.error("[%s] UID %s 推送失败（第 %d 次）：%s",
+                        log.error("[%s] UID %s push failed (attempt %d): %s",
                                   addr, uid, attempts, exc)
                         if give_up:
-                            log.error("[%s] UID %s 连续 %d 次失败，放弃重试。"
-                                      "该来信已记录在 processed，需人工补看：%s ｜ %s",
+                            log.error("[%s] UID %s failed %d times in a row, giving up retries."
+                                      "This incoming mail was recorded in processed and needs manual review: %s | %s",
                                       addr, uid, attempts, mail["from_addr"],
                                       mail["subject"])
                         else:
-                            done = False   # 不推进水位，下轮重试
+                            done = False   # Don't advance the watermark; retry next round
 
             if done:
                 seen.add(key)
@@ -595,7 +599,7 @@ def _poll_inbox(acct, state, opts):
                 _save_state(state)
             else:
                 _save_state(state)
-                break          # 停在失败这一封，避免后面的推进把水位带过去
+                break          # Stop at the failed message so later progress doesn't move the watermark past it
     finally:
         try:
             M.logout()
@@ -605,7 +609,7 @@ def _poll_inbox(acct, state, opts):
 
 
 def _poll_sent(acct, state, opts):
-    """读「已发送」，记录我们回过谁 —— 只看 INBOX 会误判「没人处理」。"""
+    """Read "Sent" to record who we've replied to — looking only at INBOX would wrongly flag "nobody handled it"."""
     addr = acct["address"]
     st = state.setdefault(addr, {})
     M = _connect(acct)
@@ -613,17 +617,17 @@ def _poll_sent(acct, state, opts):
     try:
         folder = _find_sent_folder(M)
         if not folder:
-            log.warning("[%s] 找不到已发送文件夹，跳过", addr)
+            log.warning("[%s] Sent folder not found, skipping", addr)
             return 0
         typ, data = M.select('"%s"' % folder, readonly=True)
         if typ != "OK":
-            log.warning("[%s] 打开已发送失败：%s", addr, data)
+            log.warning("[%s] Failed to open Sent folder: %s", addr, data)
             return 0
         uids = _uids(M)
         top = max(uids) if uids else 0
         if "sent_uid" not in st:
             pending = uids[-MAX_FETCH:]
-            log.info("[%s] 已发送首次运行：回读最近 %d 封建立往来记录", addr, len(pending))
+            log.info("[%s] Sent first run: reading back the last %d messages to build correspondence history", addr, len(pending))
         else:
             pending = [u for u in uids if u > int(st.get("sent_uid") or 0)][:MAX_FETCH]
         for uid in pending:
@@ -643,7 +647,7 @@ def _poll_sent(acct, state, opts):
         st["sent_uid"] = top
         _save_state(state)
         if recorded:
-            log.info("[%s] 已发送记录更新 %d 封（累计 %d 条）",
+            log.info("[%s] Sent record update %d emails (total %d)",
                      addr, recorded, len(st.get("sent") or []))
     finally:
         try:
@@ -658,8 +662,8 @@ def _poll_account(acct, state, opts):
     try:
         _poll_sent(acct, state, opts)
     except Exception as exc:
-        # 已发送读失败不该拖垮来信推送 —— 记下来但不算轮询失败
-        log.error("[%s] 已发送读取失败（不影响来信推送）：%s", acct["address"], exc)
+        # A failed Sent read shouldn't take down incoming-mail push — log it but don't count it as a polling failure
+        log.error("[%s] Failed to read sent records (does not affect incoming mail push): %s", acct["address"], exc)
     return new_count
 
 
@@ -673,19 +677,19 @@ def poll_all(accounts, state, opts, counters):
         except Exception as exc:
             rec = counters.setdefault(addr, {"fails": 0, "alert_at": 0})
             rec["fails"] = rec.get("fails", 0) + 1
-            log.error("[%s] 轮询失败（连续 %d 次）：%s", addr, rec["fails"], exc)
+            log.error("[%s] Polling failed (%d consecutive times): %s", addr, rec["fails"], exc)
             now = time.time()
             if rec["fails"] >= ALERT_AFTER and now - rec.get("alert_at", 0) > ALERT_COOLDOWN:
                 rec["alert_at"] = now
                 try:
                     feishu.send_card(_alert_card(acct, exc, rec["fails"]))
-                    log.info("[%s] 已推送监控告警卡", addr)
+                    log.info("[%s] Pushed monitoring alert card", addr)
                 except Exception as inner:
-                    log.error("[%s] 告警卡也发不出去：%s", addr, inner)
-    # 全部账号都长期失败 -> 服务已无意义，退出让 systemd 重启
+                    log.error("[%s] Alert card also failed to send: %s", addr, inner)
+    # All accounts failing long-term -> the service is meaningless; exit and let systemd restart it
     if accounts and all(counters.get(a["address"], {}).get("fails", 0) >= EXIT_AFTER
                         for a in accounts):
-        log.error("全部账号连续失败 ≥ %d 次，退出让 systemd 重启", EXIT_AFTER)
+        log.error("All accounts failed consecutively ≥ %d times, exiting to let systemd restart", EXIT_AFTER)
         sys.exit(1)
 
 
@@ -694,25 +698,25 @@ def _alert_card(acct, exc, fails):
         "schema": "2.0",
         "config": {"update_multi": True},
         "header": {"title": {"tag": "plain_text",
-                             "content": "🔴 邮箱监控异常 · %s" % acct["label"]},
+                             "content": "🔴 Mailbox monitor error · %s" % acct["label"]},
                    "template": "red"},
         "body": {"elements": [
-            feishu._md("**收件箱：** `%s`" % acct["address"]),
-            feishu._md("**连续失败：** %d 次" % fails),
-            feishu._md("**错误：**\n> %s" % str(exc)[:400]),
-            feishu._md("新的客户来信可能收不到。常见原因："
-                       "密码被改、后台关闭了 IMAP、账号被限制登录。"),
+            feishu._md("**Mailbox:** `%s`" % acct["address"]),
+            feishu._md("**Consecutive failures:** %d" % fails),
+            feishu._md("**Error:**\n> %s" % str(exc)[:400]),
+            feishu._md("New customer email may be missed. Common causes: "
+                       "password changed, IMAP disabled, account restricted."),
         ]},
     }
 
 
-# ---------------- 入口 ----------------
+# ---------------- Entry point ----------------
 
 def _sample():
     return {
         "uid": 0, "message_id": "<sample@local>",
         "subject": "Inquiry: pricing and lead time",
-        "from_name": "测试发件人（非真实客户）",
+        "from_name": "Test sender (not a real customer)",
         "from_addr": "sample@example.com", "local_time": "2026-09-22 18:00",
         "body": "Hello,\n\nWe are looking for the product listed on your website. "
                 "Could you please quote your price and delivery time?\n\n"
@@ -733,9 +737,9 @@ def _summary(state):
             "account": addr,
             "inbox_last_uid": st.get("last_uid"),
             "sent_last_uid": st.get("sent_uid"),
-            "已发送记录数": len(st.get("sent") or []),
-            "处理统计": by,
-            "最近 3 条": proc[-3:],
+            "sent_records": len(st.get("sent") or []),
+            "processed": by,
+            "last_3": proc[-3:],
         })
     return out
 
@@ -753,19 +757,19 @@ def main(argv=None):
         datefmt="%H:%M:%S", stream=sys.stdout)
 
     accounts = load_accounts()
-    log.info("邮箱监控启动：%d 个账号（%s），轮询间隔 %d 秒，状态目录 %s",
+    log.info("Mail monitoring started: %d accounts (%s), polling interval %d seconds, state directory %s",
              len(accounts), "、".join(a["label"] for a in accounts),
              POLL_SECONDS, STATE_DIR)
 
     if "--test-card" in argv:
         acct = accounts[0]
         demo_domain = _DOMAINS[0] if _DOMAINS else "other"
-        triage = {"domain": demo_domain, "intent": "询价", "urgency": "高",
-                  "summary": "客户询问价格与交期（本条为测试）"}
+        triage = {"domain": demo_domain, "intent": "quote", "urgency": "high",
+                  "summary": "Customer asks about price and lead time (test card)"}
         to, how = chat_for_domain(demo_domain, acct["page_id"])
         mid = feishu.send_card(
             build_mail_card(acct, _sample(), triage, None, test=True), to=to)
-        log.info("测试卡已发送：群=%s(%s) message_id=%s", to[:12], how, mid)
+        log.info("Test card sent: group=%s(%s) message_id=%s", to[:12], how, mid)
         return 0
 
     if "--status" in argv:
@@ -781,7 +785,7 @@ def main(argv=None):
         except SystemExit:
             raise
         except Exception as exc:
-            log.error("本轮异常：%s", exc)
+            log.error("Exception in this round: %s", exc)
         if opts["once"]:
             break
         time.sleep(max(5.0, POLL_SECONDS - (time.time() - begin)))

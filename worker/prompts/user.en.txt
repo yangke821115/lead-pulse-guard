@@ -1,0 +1,8 @@
+{kb}
+
+# Comment to handle
+
+- Page: {page_name} (KB topic: {kb_slug})
+- Commenter: {author_name}
+- Comment:
+{comment}

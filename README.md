@@ -6,6 +6,9 @@ Most comment-automation tools are fully automatic. That is fine for a restaurant
 
 Lead Pulse Guard is built around one rule: **the model proposes, a human disposes.**
 
+> **Chinese edition:** in progress. The link below is a placeholder until the translation is published.
+> [中文说明 / Chinese README](docs/README.zh-CN.md)
+
 ---
 
 ## Why this exists
@@ -165,6 +168,15 @@ AIW_POST_ENABLED=false ./venv/bin/python run.py
 With `AIW_POST_ENABLED=false` the Send button reports "simulated send" and nothing reaches Facebook. Flip it to `true` only after you have watched a few drafts come through.
 
 ---
+
+### Language
+
+Customer replies follow the commenter's language. If the comment has no detectable language, the Page's `language`
+in `pages.json` is used as the fallback.
+
+Rules, prompts, code, comments and logs are English-only (`worker/prompts/*.en.txt`). Operator-facing Lark cards
+default to English; set `AIW_CARD_LANG=zh` to render them in Chinese. Enum values stored in the database stay
+language-neutral either way, and older Chinese values are accepted on read.
 
 ## Documentation
 

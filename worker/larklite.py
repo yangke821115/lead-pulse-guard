@@ -84,7 +84,7 @@ class _Builder:
 
     def build(self):
         if self._callback is None:
-            raise RuntimeError("没有注册任何回调")
+            raise RuntimeError("No callbacks registered")
         return EventDispatcherHandler(self._callback, self._message_callback)
 
 
@@ -95,12 +95,12 @@ def install():
         return
     if "lark_oapi" in sys.modules:
         raise RuntimeError(
-            "lark_oapi 已经被导入过了 —— 垫片必须抢在任何 lark_oapi 导入之前装"
+            "lark_oapi has already been imported — the shim must be installed before any lark_oapi import"
         )
 
     spec = importlib.util.find_spec("lark_oapi")
     if spec is None or not spec.submodule_search_locations:
-        raise RuntimeError("环境里找不到 lark_oapi 包，无法安装垫片")
+        raise RuntimeError("lark_oapi package not found in the environment, cannot install shim")
     root = list(spec.submodule_search_locations)[0]
 
     package = types.ModuleType("lark_oapi")

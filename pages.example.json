@@ -1,10 +1,12 @@
 {
   "111111111111111": {
     "name": "page-a",
-    "kb": "industrial"
+    "kb": "industrial",
+    "language": "en"
   },
   "222222222222222": {
     "name": "page-b",
-    "kb": "consumer"
+    "kb": "consumer",
+    "language": "en"
   }
 }

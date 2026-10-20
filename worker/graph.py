@@ -43,7 +43,7 @@ def has_token(page_id):
 def verify_identity(page_id):
     """确认令牌确实是这个主页的，而不是个人账号。"""
     if not has_token(page_id):
-        return False, {"error": "没有该主页的令牌文件", "page_id": page_id}
+        return False, {"error": "No token file for this page", "page_id": page_id}
     token = config.read_secret("page-token-%s" % page_id, config.GRAPH_SECRETS)
     me = _get("/me?fields=id,name", token)
     return me.get("id") == page_id, me
@@ -52,16 +52,16 @@ def verify_identity(page_id):
 def post_reply(page_id, comment_id, message):
     """以主页身份回复某条评论。返回 (ok, detail)。"""
     if not config.POST_ENABLED:
-        return True, {"dry_run": True, "message": "POST_ENABLED=false，未真正发布"}
+        return True, {"dry_run": True, "message": "POST_ENABLED=false, not actually published"}
 
     if not has_token(page_id):
-        return False, {"error": "没有该主页的访问令牌，拒绝发送", "page_id": page_id}
+        return False, {"error": "No access token for this page, refusing to send", "page_id": page_id}
 
     token = config.read_secret("page-token-%s" % page_id, config.GRAPH_SECRETS)
 
     ok, me = verify_identity(page_id)
     if not ok:
-        return False, {"error": "令牌身份与目标主页不符，已拒绝发送",
+        return False, {"error": "Token identity does not match the target page, sending refused",
                        "token_identity": me.get("id"), "expected": page_id}
 
     out = _post("/%s/comments" % comment_id, {"message": message}, token)

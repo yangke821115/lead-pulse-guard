@@ -70,7 +70,7 @@ def claim(leadgen_id, page_id, form_id, created_time):
             conn.execute(
                 "INSERT INTO leads (leadgen_id,page_id,form_id,created_time,"
                 "received_at,status,updated_at) VALUES (?,?,?,?,?,?,?)",
-                (leadgen_id, page_id, form_id, created_time, _now(), "处理中", _now()))
+                (leadgen_id, page_id, form_id, created_time, _now(), "Processing", _now()))
             conn.commit()
             return True
         except sqlite3.IntegrityError:
@@ -80,7 +80,7 @@ def claim(leadgen_id, page_id, form_id, created_time):
 def mark(leadgen_id, **fields):
     bad = [k for k in fields if k not in _COLUMNS]
     if bad:
-        raise ValueError("leadstore.mark 收到未知列: %s" % bad)
+        raise ValueError("leadstore.mark received unknown column: %s" % bad)
     if not fields:
         return
     assignments = ", ".join("%s=?" % k for k in fields)

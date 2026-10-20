@@ -39,7 +39,7 @@ WINDOW = 7 * 86400      # 只兜底最近 7 天的评论：更老的属历史遗
 POST_LIMIT = 25         # 每个主页看最近多少条帖子
 DRY = "--dry-run" in sys.argv
 
-PAGES = [(pid, name) for pid, name, _kb in config.pages()]
+PAGES = [(pid, name) for pid, name, _kb, _lang in config.pages()]
 
 
 def log(msg):
@@ -112,7 +112,7 @@ def post_to_gateway(secret, payload):
 
 def main():
     if not PAGES:
-        log("[ERROR] 没有可轮询的主页：pages.json 缺失，且 %s 下没有 page-token-*"
+        log("[ERROR] No homepages to poll: pages.json is missing, and no page-token-* found under %s"
             % TOKEN_DIR)
         return 1
 
@@ -126,7 +126,7 @@ def main():
             token = open(os.path.join(
                 TOKEN_DIR, "page-token-%s" % page_id)).read().strip()
         except Exception as exc:
-            log("[WARN] %s 读不到令牌：%r" % (page_name, exc))
+            log("[WARN] Failed to read token from %s: %r" % (page_name, exc))
             failed += 1
             continue
 
@@ -136,7 +136,7 @@ def main():
                                  "{id,from,message,created_time,parent{id},permalink_url}"),
                          limit=str(POST_LIMIT))
         except Exception as exc:
-            log("[WARN] %s 帖子列表读取失败：%r" % (page_name, exc))
+            log("[WARN] Failed to read post list from %s: %r" % (page_name, exc))
             failed += 1
             continue
 
@@ -174,22 +174,22 @@ def main():
                                      "permalink_url": "", "is_published": True},
                         }}]}]}
                 if DRY:
-                    log("  缺 %s（%s，%s）" % (cid, page_name,
+                    log("  Missing %s (%s, %s)" % (cid, page_name,
                                               (c.get("message") or "")[:40]))
                     injected += 1
                     continue
                 status = post_to_gateway(secret, payload)
                 if status == 200:
                     injected += 1
-                    log("补投 %s（%s，%s）-> 网关 %s" % (cid, page_name,
+                    log("Re-submitting %s (%s, %s) -> gateway %s" % (cid, page_name,
                           (c.get("message") or "")[:40], status))
                 else:
-                    log("[ERROR] 补投 %s 失败：网关返回 %s" % (cid, status))
+                    log("[ERROR] Failed to re-submit %s: gateway returned %s" % (cid, status))
 
     if DRY:
-        log("Facebook 侧扫描 %d 条评论，其中网关没见过的 %d 条" % (scanned, injected))
+        log("Scanned %d comments on the Facebook side, of which %d were unseen by the gateway" % (scanned, injected))
     elif injected:
-        log("本轮补投 %d 条（共扫描 %d 条）" % (injected, scanned))
+        log("Re-injected %d entries this round (%d scanned in total)" % (injected, scanned))
     return 1 if failed >= len(PAGES) else 0
 
 

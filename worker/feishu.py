@@ -1,7 +1,7 @@
 """飞书侧：发卡片、更新卡片、拿 tenant_access_token。"""
-import json, os, time, urllib.error, urllib.request
+import datetime, json, os, time, urllib.error, urllib.request
 
-from . import config
+from . import config, i18n
 
 BASE = "https://open.feishu.cn/open-apis"
 _token_cache = {"value": None, "expire_at": 0}
@@ -83,7 +83,7 @@ def operator_allowlist():
     return {x.strip() for x in raw.replace(",", "\n").splitlines() if x.strip()}
 
 
-# ---------- 卡片构造 ----------
+# ---------- Card construction ----------
 
 def _md(text):
     return {"tag": "markdown", "content": text}
@@ -117,24 +117,26 @@ def _source_line(event):
     comment = (event.get("comment") or {})
     bits = []
     st = post.get("status_type")
-    kind = {"added_photos": "图文帖", "added_video": "视频帖/Reel",
-            "created": "文字帖", "shared_story": "转发帖"}.get(st)
+    kind = {"added_photos": i18n.T("type_photo"),
+            "added_video": i18n.T("type_video"),
+            "created": i18n.T("type_text"),
+            "shared_story": i18n.T("type_shared")}.get(st)
     if kind:
-        bits.append("帖子类型：" + kind)
+        bits.append(i18n.T("post_type") + kind)
     url = post.get("permalink_url") or comment.get("permalink_url")
     if url:
-        bits.append("[打开原帖](%s)" % url)
+        bits.append(i18n.T("open_post") % url)
     elif post.get("id"):
-        bits.append("帖子 ID：`%s`" % post.get("id"))
+        bits.append(i18n.T("post_id") % post.get("id"))
     ts = comment.get("created_time")
     if ts:
         try:
             dt = datetime.datetime.fromtimestamp(
                 int(ts), datetime.timezone(datetime.timedelta(hours=8)))
-            bits.append("留言时间：%s（北京时间）" % dt.strftime("%Y-%m-%d %H:%M"))
+            bits.append(i18n.T("comment_time") % dt.strftime("%Y-%m-%d %H:%M"))
         except Exception:
             pass
-    return "**来源：** " + "　".join(bits) if bits else "**来源：** 未知"
+    return i18n.T("source") + "　".join(bits) if bits else i18n.T("source_unknown")
 
 
 def recall_message(message_id):
@@ -152,43 +154,48 @@ def build_review_card(event, suggestion):
     check = suggestion.get("self_check") or {}
 
     flags = []
-    if check.get("invented_specifics"):
-        flags.append("⚠️ 自检：可能编造了具体信息")
-    if not check.get("answers_question"):
-        flags.append("⚠️ 自检：未直接回答问题")
-    if not check.get("cites_only_kb"):
-        flags.append("⚠️ 自检：可能超出知识库范围")
+    if check.get("invented_specifics") is True:
+        flags.append(i18n.T("flag_invented"))
+    if check.get("answers_question") is False:
+        flags.append(i18n.T("flag_unanswered"))
+    if check.get("cites_only_kb") is False:
+        flags.append(i18n.T("flag_outside_kb"))
     flag_line = ("\n" + "\n".join(flags)) if flags else ""
 
-    header_color = {"热线索": "red", "温线索": "orange",
-                    "冷线索": "blue", "非目标": "grey"}.get(suggestion.get("stage"), "blue")
+    header_color = {"hot": "red", "warm": "orange",
+                    "cold": "blue", "not_target": "grey"}.get(
+        i18n.code("stage", suggestion.get("stage")), "blue")
 
-    body_text = "**【用户评论】**\n> %s\n\n**【AI分析】**\n意图：%s　客户阶段：%s　建议动作：%s\n\n**【AI回复建议】**（可直接修改后点发送）%s" % (
-        (comment.get("message") or "（无文字）").replace("\n", " "),
-        suggestion.get("intent"), suggestion.get("stage"), suggestion.get("action"), flag_line)
+    body_text = i18n.T("review_body") % (
+        (comment.get("message") or i18n.T("no_text")).replace("\n", " "),
+        i18n.label("intent", suggestion.get("intent")),
+        i18n.label("stage", suggestion.get("stage")),
+        i18n.label("action", suggestion.get("action")),
+        flag_line)
 
     return {
         "schema": "2.0",
         "config": {"update_multi": True},
         "header": {
-            "title": {"tag": "plain_text", "content": "🔔 %s · 新评论待审核" % (page.get("name") or "未知主页")},
+            "title": {"tag": "plain_text",
+                      "content": i18n.T("review_title") % (page.get("name") or i18n.T("unknown_page"))},
             "template": header_color,
         },
         "body": {"elements": [
-            _md("**评论者：** %s" % (author.get("name") or "某位用户")),
+            _md(i18n.T("commenter") % (author.get("name") or i18n.T("unknown_user"))),
             _md(_source_line(event)),
             _md(body_text),
             {"tag": "form", "name": "reply_form", "elements": [
                 {"tag": "input", "name": "edited_reply", "input_type": "multiline_text",
                  "rows": 4, "default_value": _clip(suggestion.get("reply") or "", CARD_TEXT_LIMIT),
-                 "label": {"tag": "plain_text", "content": "回复正文"}},
+                 "label": {"tag": "plain_text", "content": i18n.T("reply_label")}},
                 {"tag": "button", "name": "send_btn", "type": "primary",
                  "action_type": "form_submit",
-                 "text": {"tag": "plain_text", "content": "发送到 Facebook"},
+                 "text": {"tag": "plain_text", "content": i18n.T("send")},
                  "value": {"action": "send", "comment_id": comment.get("id")}},
             ]},
             {"tag": "button", "name": "ignore_btn", "type": "default",
-             "text": {"tag": "plain_text", "content": "忽略这条"},
+             "text": {"tag": "plain_text", "content": i18n.T("ignore")},
              "value": {"action": "ignore", "comment_id": comment.get("id")}},
         ]},
     }
@@ -202,25 +209,22 @@ def build_done_card(event, suggestion, result_text, tone="green"):
         "schema": "2.0",
         "config": {"update_multi": True},
         "header": {
-            "title": {"tag": "plain_text", "content": "%s · %s" % (
-                page.get("name") or "未知主页", result_text.split("\n")[0][:40])},
+            "title": {"tag": "plain_text", "content": i18n.T("done_title") % (
+                page.get("name") or i18n.T("unknown_page"), result_text.split("\n")[0][:40])},
             "template": tone,
         },
         "body": {"elements": [
-            _md("**评论者：** %s" % (author.get("name") or "某位用户")),
+            _md(i18n.T("commenter") % (author.get("name") or i18n.T("unknown_user"))),
             _md(_source_line(event)),
-            _md("**原评论：**\n> %s" % ((comment.get("message") or "（无文字）").replace("\n", " "))),
+            _md(i18n.T("original_comment") % (
+                (comment.get("message") or i18n.T("no_text")).replace("\n", " "))),
             _md(result_text),
         ]},
     }
 
 
-
 def build_alert_card(event, detail):
-    """重试链全部失败时的告警卡。无按钮：这不是「待审核」，是「待人工处理」。
-
-    存在意义：以前生成失败只是记日志、事件被丢弃，客户留言无声消失。
-    """
+    """重试链全部失败时的告警卡片。无按钮：需人工处理。"""
     page = event.get("page") or {}
     author = event.get("author") or {}
     comment = event.get("comment") or {}
@@ -229,26 +233,22 @@ def build_alert_card(event, detail):
         "config": {"update_multi": True},
         "header": {
             "title": {"tag": "plain_text",
-                      "content": "⚠️ %s · AI 生成失败，需人工处理" % (page.get("name") or "未知主页")},
+                      "content": i18n.T("alert_title") % (page.get("name") or i18n.T("unknown_page"))},
             "template": "red",
         },
         "body": {"elements": [
-            _md("**评论者：** %s" % (author.get("name") or "某位用户")),
+            _md(i18n.T("commenter") % (author.get("name") or i18n.T("unknown_user"))),
             _md(_source_line(event)),
-            _md("**用户评论：**\n> %s" % ((comment.get("message") or "（无文字）").replace("\n", " "))),
-            _md("**失败详情：**\n```\n%s\n```" % str(detail)[:700]),
-            _md("这条留言**没有生成任何回复建议**，请人工决定如何处理。"
-                "原始事件仍在 spool 里，修好后可重放。"),
+            _md(i18n.T("user_comment") % (
+                (comment.get("message") or i18n.T("no_text")).replace("\n", " "))),
+            _md(i18n.T("failure_detail") % str(detail)[:700]),
+            _md(i18n.T("alert_body")),
         ]},
     }
 
 
 def build_notice_card(event, note, tone="grey"):
-    """纯告知卡片：不需要任何操作，也没有按钮。
-
-    用于被判定为「无需回复」但用户可能想知道的留言（如收尾语「谢谢」）。
-    刻意不调用 LLM —— 回复「谢谢」不值得花 token 去生成「不客气」。
-    """
+    """信息卡：不需要操作，无按钮。"""
     page = event.get("page") or {}
     author = event.get("author") or {}
     comment = event.get("comment") or {}
@@ -257,12 +257,13 @@ def build_notice_card(event, note, tone="grey"):
         "config": {"update_multi": True},
         "header": {
             "title": {"tag": "plain_text",
-                      "content": "💬 %s · 无需回复的留言" % (page.get("name") or "未知主页")},
+                      "content": i18n.T("notice_title") % (page.get("name") or i18n.T("unknown_page"))},
             "template": tone,
         },
         "body": {"elements": [
-            _md("**评论者：** %s" % (author.get("name") or "某位用户")),
-            _md("**内容：**\n> %s" % ((comment.get("message") or "（无文字）").replace("\n", " "))),
+            _md(i18n.T("commenter") % (author.get("name") or i18n.T("unknown_user"))),
+            _md(i18n.T("content") % (
+                (comment.get("message") or i18n.T("no_text")).replace("\n", " "))),
             _md(note),
         ]},
     }
@@ -295,10 +296,10 @@ def send_text(text, to=None):
 
 
 def send_text_to(open_id, text):
-    """给指定用户发私聊文本。
+    """向指定用户发一条私信纯文本。
 
-    用途：「复制建议回复」按钮 —— 飞书卡片**不接受**原生 copy 行为
-    （实测 code 200621 unknown behavior type），改把原文私聊发给点击者，
+    用途：「复制建议回复」按钮 —— Lark 卡片**不接受**原生复制行为
+    （实测 code 200621 unknown behavior type），所以改为把原文以私信发给点击者，
     手机上长按即可复制。
     """
     return _request("/im/v1/messages?receive_id_type=open_id", {
@@ -307,77 +308,64 @@ def send_text_to(open_id, text):
     }, token=tenant_token())
 
 
-LEAD_TEMPLATE = {"高": "red", "中": "orange", "低": "blue"}
-LEAD_BADGE = {"高": "🔴 高", "中": "🟠 中", "低": "🔵 低"}
+def _priority_badge(code):
+    icon = {"high": "🔴", "medium": "🟠", "low": "🔵"}.get(code, "🟠")
+    return icon + " " + i18n.label("priority", code)
 
 
 def build_lead_card(page_name, display, analysis, record_url):
-    """询盘线索卡片。
+    """线索卡片。无状态变更按钮：销售在多维表格里跟进。"""
+    priority = i18n.priority_code((analysis.get("priority") or "medium").strip())
+    badge = _priority_badge(priority)
+    template = {"high": "red", "medium": "orange", "low": "blue"}.get(priority, "orange")
 
-    刻意不含任何「会改状态」的按钮：线索不是待发布内容，
-    不需要「发送/忽略」这种审批动作，销售看表格跟进即可。
-    """
-    priority = (analysis.get("priority") or "中").strip()
-    badge = LEAD_BADGE.get(priority, "🟠 中")
-    template = LEAD_TEMPLATE.get(priority, "orange")
-
-    # 产品需求不上卡片：多数填「其他/待确认」，且 AI 分析里已重新解读过。
-    # 原始值仍写多维表格（产品需求字段），不受影响。
-    head = ("**👤 客户：** %s　**🏢 公司：** %s\n"
-            "**🌏 国家/地区：** %s　**📅 提交：** %s") % (
+    head = i18n.T("lead_customer") % (
         display.get("name"), display.get("company"),
         display.get("country"), display.get("submitted"))
-    head += "\n**📮 联系方式：** %s" % display.get("contacts")
+    head += "\n" + i18n.T("lead_contact") % display.get("contacts")
 
-    # 卡片空间有限：依据/缺失各截一段，完整内容看多维表格。
-    _reason = (analysis.get("reason") or "待确认").replace("\n", " ").strip()
-    _missing = (analysis.get("missing") or "待确认").replace("\n", " ").strip()
+    _reason = (analysis.get("reason") or i18n.T("tbd")).replace("\n", " ").strip()
+    _missing = (analysis.get("missing") or i18n.T("tbd")).replace("\n", " ").strip()
     if len(_reason) > 28:
         _reason = _reason[:28] + "…"
     if len(_missing) > 10:
         _missing = _missing[:10] + "…"
-    ai = ("**摘要：** %s\n**优先级：** %s\n**依据：** %s　**缺失：** %s"
-          % (analysis.get("summary") or "待确认", badge, _reason, _missing))
+    ai = i18n.T("lead_summary") % (
+        analysis.get("summary") or i18n.T("tbd"), badge, _reason, _missing)
 
-    reply_zh = (analysis.get("suggested_reply") or "（无）").strip()
-    reply_en = (analysis.get("suggested_reply_en") or "").strip()
+    reply_zh = (analysis.get("suggested_reply") or i18n.T("no_value")).strip()
 
     elements = [
         _md(head),
         {"tag": "hr"},
-        _md("**🤖 AI 分析**\n" + ai),
-        _md("**💬 建议回复（中文）**\n> %s" % reply_zh.replace("\n", "\n> ")),
+        _md(i18n.T("lead_ai") + ai),
+        _md(i18n.T("lead_reply") % reply_zh.replace("\n", "\n> ")),
     ]
     elements.append({"tag": "button", "name": "copy_btn", "type": "primary",
-                     "text": {"tag": "plain_text", "content": "📨 发送英文回复到我的私聊"},
+                     "text": {"tag": "plain_text", "content": i18n.T("lead_copy")},
                      "value": {"action": "lead_copy",
                                "leadgen_id": display.get("leadgen_id")}})
     if record_url:
         elements.append({"tag": "button", "name": "open_btn", "type": "default",
-                         "text": {"tag": "plain_text", "content": "📊 打开多维表格记录"},
+                         "text": {"tag": "plain_text", "content": i18n.T("lead_open")},
                          "behaviors": [{"type": "open_url", "default_url": record_url}]})
 
     return {"schema": "2.0", "config": {"update_multi": True},
             "header": {"title": {"tag": "plain_text",
-                                 "content": "🔔 %s · 新询盘线索" % page_name},
+                                 "content": i18n.T("lead_title") % page_name},
                        "template": template},
             "body": {"elements": elements}}
 
 
 def build_lead_alert_card(page_name, leadgen_id, record_id, detail):
-    """线索处理失败告警。无按钮：这是「待人工处理」，不是「待审批」。"""
+    """线索处理失败告警。无按钮：需人工处理。"""
     elements = [
-        _md("**线索 ID：** `%s`" % leadgen_id),
-        _md("**失败详情：**\n```\n%s\n```" % str(detail)[:700]),
+        _md(i18n.T("lead_id") % leadgen_id),
+        _md(i18n.T("failure_detail") % str(detail)[:700]),
     ]
-    if record_id:
-        elements.append(_md("线索**已经存入多维表格**，只是没生成 AI 分析，"
-                            "请直接到表里人工查看。"))
-    else:
-        elements.append(_md("这条线索**没有写入多维表格**。原始事件仍在 spool 里，"
-                            "修好后可重放，不会丢。"))
+    elements.append(_md(i18n.T("lead_stored") if record_id else i18n.T("lead_not_stored")))
     return {"schema": "2.0", "config": {"update_multi": True},
             "header": {"title": {"tag": "plain_text",
-                                 "content": "⚠️ %s · 询盘处理失败，需人工处理" % page_name},
+                                 "content": i18n.T("lead_alert_title") % page_name},
                        "template": "red"},
             "body": {"elements": elements}}

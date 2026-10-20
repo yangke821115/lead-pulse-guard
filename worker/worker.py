@@ -4,7 +4,7 @@
 """
 import json, os, queue, threading, time
 
-from . import chat, config, feishu, graph, kbase, leadstore, leads, llm, spool
+from . import chat, config, feishu, graph, i18n, kbase, leadstore, leads, llm, spool
 
 from . import larklite
 
@@ -128,16 +128,16 @@ def _push_notice_card(event, comment_id):
     """
     page_id = (event.get("page") or {}).get("id")
     if not graph.has_token(page_id):
-        log("跳过 comment=%s：主页 %s 无令牌" % (comment_id, page_id))
+        log("Skipping comment=%s: homepage %s has no token" % (comment_id, page_id))
         return
-    note = ("这条属于对话收尾语（如「谢谢」「好的」「收到」）—— **无需回复**。\n\n"
-            "回复它只会形成「你谢我、我谢你」的来回刷屏，所以系统主动不回。\n"
-            "本卡片仅作告知，不需要任何操作。")
+    note = ("This is a conversation-closing remark (e.g. \"thanks\", \"ok\", \"got it\") — **no reply needed**.\n\n"
+            "Replying would only create a back-and-forth of \"you thank me, I thank you\", so the system deliberately does not reply.\n"
+            "This card is for informational purposes only; no action is required.")
     try:
         feishu.send_card(feishu.build_notice_card(event, note))
-        log("推送无需回复提示卡 comment=%s（closing_phrase）" % comment_id)
+        log("Pushing no-reply-needed prompt card comment=%s (closing_phrase)" % comment_id)
     except Exception as exc:
-        log("提示卡推送失败 comment=%s: %r" % (comment_id, exc))
+        log("Failed to push prompt card comment=%s: %r" % (comment_id, exc))
 
 
 def _kb_slug(event):
@@ -152,7 +152,7 @@ def process_event(event):
         try:
             leads.process(event)
         except Exception as exc:
-            log("线索处理异常: %r" % (exc,))
+            log("Lead processing error: %r" % (exc,))
         return
 
     comment = event.get("comment") or {}
@@ -160,50 +160,50 @@ def process_event(event):
     comment_id = comment.get("id")
 
     if not comment_id:
-        log("跳过：事件缺少 comment_id")
+        log("Skipping: event missing comment_id")
         return
     if _already_seen(comment_id):
-        log("跳过 comment=%s（本轮已处理过）" % comment_id)
+        log("Skipping comment=%s (already processed this round)" % comment_id)
         return
     if not decision.get("reply"):
         reason = decision.get("reason")
         if reason == "closing_phrase":
             _push_notice_card(event, comment_id)
         else:
-            log("跳过 comment=%s（%s）" % (comment_id, reason))
+            log("Skipping comment=%s (%s)" % (comment_id, reason))
         return
 
     page_id = (event.get("page") or {}).get("id")
     if not graph.has_token(page_id):
-        log("跳过 comment=%s：主页 %s 没有配置访问令牌，推了也发不出去" % (comment_id, page_id))
+        log("Skipping comment=%s: homepage %s has no access token configured, so it can't be sent anyway" % (comment_id, page_id))
         return
 
-    log("处理 comment=%s 来自 %s" % (comment_id, (event.get("author") or {}).get("name")))
+    log("Processing comment=%s from %s" % (comment_id, (event.get("author") or {}).get("name")))
     kb = kbase.load(_kb_slug(event))
     block = kbase.as_prompt_block(kb)
     if kb["facts_empty"]:
-        log("  知识库「已确认事实」为空 —— 模型将不会陈述任何产品信息")
+        log("  Knowledge base \"confirmed facts\" is empty — the model will not state any product information")
 
     t0 = time.time()
     try:
         suggestion, usage = llm.generate(event, block)
     except Exception as exc:
-        log("  ❌ 生成失败，重试链全部用尽: %r" % (exc,))
+        log("  ❌ Generation failed, retry chain exhausted: %r" % (exc,))
         try:
             _tgt, _why = feishu.chat_for((event.get("page") or {}).get("id"), None)
             feishu.send_card(feishu.build_alert_card(event, exc), to=_tgt)
-            log("  ⚠️ 已推送「生成失败」告警卡片 → 群 %s（依据：%s）" % (_tgt[-8:], _why))
+            log("  ⚠️ Pushed \"generation failed\" alert card → group %s (reason: %s)" % (_tgt[-8:], _why))
         except Exception as exc2:
-            log("  ❌ 告警卡片也发送失败: %r" % (exc2,))
+            log("  ❌ Failed to send alert card as well: %r" % (exc2,))
         return
-    log("  ✅ 生成完成 %.1fs tokens=%s via=%s model=%s%s intent=%s action=%s domain=%s" % (
+    log("  ✅ Generation complete %.1fs tokens=%s via=%s model=%s%s intent=%s action=%s domain=%s" % (
         time.time() - t0, usage.get("total_tokens", "?"),
         usage.get("via", "?"), usage.get("model", "?"),
-        "（已降级兜底）" if usage.get("fell_back") else "",
+        "(degraded fallback)" if usage.get("fell_back") else "",
         suggestion.get("intent"), suggestion.get("action"), suggestion.get("domain")))
 
-    if suggestion.get("action") == "忽略":
-        log("  模型判定为忽略，不推送卡片")
+    if i18n.code("action", suggestion.get("action")) == "ignore":
+        log("  Model decided to ignore, not pushing card")
         return
 
     card = feishu.build_review_card(event, suggestion)
@@ -212,9 +212,9 @@ def process_event(event):
     try:
         message_id = feishu.send_card(card, to=target)
     except Exception as exc:
-        log("  ❌ 推送卡片失败: %r" % (exc,))
+        log("  ❌ Failed to push card: %r" % (exc,))
         return
-    log("  📨 已推送审核卡片 message_id=%s → 群 %s（依据：%s，domain=%s）"
+    log("  📨 Review card pushed message_id=%s → group %s (basis: %s, domain=%s)"
         % (message_id, target[-8:], why, suggestion.get("domain")))
 
     pending_put(comment_id, {
@@ -230,7 +230,7 @@ def process_event(event):
 
 def tail_loop(stop_event):
     tailer = spool.SpoolTailer()
-    log("spool 监听启动: %s" % tailer.path)
+    log("spool listener started: %s" % tailer.path)
     consecutive = 0
     last_sweep = 0.0          # 0 → 启动后第一轮就清一次
     while not stop_event.is_set():
@@ -243,9 +243,9 @@ def tail_loop(stop_event):
             # 「健康但无功能」—— 服务是 active，实际什么都没消费。
             # 所以连续失败到阈值就主动退出，让 systemd 重启。
             consecutive += 1
-            log("spool 循环异常（连续第 %d 次）: %r" % (consecutive, exc))
+            log("spool loop exception (consecutive #%d): %r" % (consecutive, exc))
             if consecutive >= config.MAX_CONSECUTIVE_FAILURES:
-                log("FATAL: spool 循环连续失败 %d 次，进程退出以便 systemd 重启"
+                log("FATAL: spool loop failed %d consecutive times, exiting process so systemd can restart it"
                     % consecutive)
                 os._exit(1)
 
@@ -255,10 +255,10 @@ def tail_loop(stop_event):
             try:
                 removed = pending_sweep()
                 if removed:
-                    log("🧹 清理 %d 条过期线索取件记录（保留 %d 天）"
+                    log("🧹 Cleaned up %d expired lead pickup records (retention %d days)"
                         % (removed, config.PENDING_LEAD_TTL_DAYS))
             except Exception as exc:
-                log("  [WARN] 取件记录清理失败（不影响主流程）: %r" % (exc,))
+                log("  [WARN] Failed to clean up pickup records (does not affect main flow): %r" % (exc,))
             last_sweep = time.time()
 
         stop_event.wait(config.POLL_SECONDS)
@@ -274,27 +274,26 @@ def _do_send(record, comment_id, page_id, text, message_id, chat_id=None):
     try:
         ok, detail = graph.post_reply(page_id, comment_id, text)
         if ok:
-            log("  → 人工确认发送，长度=%d 字符，dry_run=%s"
+            log("  → Manually confirmed send, length=%d chars, dry_run=%s"
                 % (len(text), bool(detail.get("dry_run"))))
             if detail.get("dry_run"):
-                headline = "**已模拟发送**（当前为 dry-run，未真正发布到 Facebook）"
+                headline = i18n.T("result_dry_run")
                 tone = "orange"
             else:
-                headline = "**已发送到 Facebook** ✅　新评论 ID：`%s`" % detail.get("comment_id")
+                headline = i18n.T("result_sent") % detail.get("comment_id")
                 tone = "green"
-            body = "%s\n\n**发出的内容：**\n> %s" % (headline, text.replace("\n", " "))
+            body = i18n.T("result_content") % (headline, text.replace("\n", " "))
         else:
-            log("  ❌ 发布失败: %s" % detail)
-            body = ("**发布失败** ❌\n\n```\n%s\n```\n\n**原草稿（未发出）：**\n> %s"
-                    % (str(detail)[:300], text.replace("\n", " ")))
+            log("  ❌ Publish failed: %s" % detail)
+            body = i18n.T("result_failed") % (str(detail)[:300], text.replace("\n", " "))
             tone = "__TONE_FAIL__"
         done = feishu.build_done_card(record["event"], record["suggestion"], body, tone=tone)
         if message_id:
-            done["header"]["title"]["content"] = "✅ 已处理（发送）· %s" % (
-                (record["event"].get("page") or {}).get("name") or "未知主页")
-            _finish_card(message_id, done, "发送", to=chat_id)
+            done["header"]["title"]["content"] = i18n.T("done_sent") % (
+                (record["event"].get("page") or {}).get("name") or i18n.T("unknown_page"))
+            _finish_card(message_id, done, "Send", to=chat_id)
     except Exception as exc:
-        log("  ❌ 后台发帖异常: %r" % (exc,))
+        log("  ❌ Background post error: %r" % (exc,))
 
 
 def _finish_card(message_id, card, label, to=None):
@@ -305,15 +304,15 @@ def _finish_card(message_id, card, label, to=None):
     """
     if message_id:
         rok, rout = feishu.recall_message(message_id)
-        log("  撤回原卡片（%s）: %s" % (label, "OK" if rok else
-                                        "失败 code=%s msg=%s" % (rout.get("code"), rout.get("msg"))))
+        log("  Recall original card (%s): %s" % (label, "OK" if rok else
+                                        "Failed code=%s msg=%s" % (rout.get("code"), rout.get("msg"))))
     else:
-        log("  WARN 未取到 open_message_id，无法撤回原卡片")
+        log("  WARN open_message_id not obtained, cannot recall original card")
     try:
         new_id = feishu.send_card(card, to=to)
-        log("  已发送「已处理」卡片（%s）message_id=%s" % (label, new_id))
+        log("  Sent \"Processed\" card (%s) message_id=%s" % (label, new_id))
     except Exception as exc:
-        log("  ❌ 发送「已处理」卡片失败（%s）: %r" % (label, exc))
+        log("  ❌ Failed to send \"Processed\" card (%s): %r" % (label, exc))
 
 
 def on_card_action(data):
@@ -337,12 +336,12 @@ def on_card_action(data):
         context = getattr(event, "context", None)
         message_id = getattr(context, "open_message_id", None)
 
-        log("卡片点击 operator=%s value=%s" % (open_id, value))
+        log("Card click operator=%s value=%s" % (open_id, value))
 
         allowed = feishu.operator_allowlist()
         if open_id not in allowed:
-            log("  ⛔ 拒绝：%s 不在审核白名单内" % open_id)
-            return toast("error", "你没有审核权限")
+            log("  ⛔ Rejected: %s is not in the review whitelist" % open_id)
+            return toast("error", i18n.T("toast_not_allowed"))
 
         kind = value.get("action")
 
@@ -351,31 +350,31 @@ def on_card_action(data):
         if kind == "lead_copy":
             rec = pending_get("lead:%s" % value.get("leadgen_id"))
             if not rec:
-                return toast("warning", "这条线索的回复原文已过期，请到多维表格里查看")
+                return toast("warning", i18n.T("toast_lead_expired"))
             threading.Thread(target=_send_lead_copy, args=(open_id, rec),
                              daemon=True).start()
-            return toast("info", "正在把回复原文发到你的私聊…")
+            return toast("info", i18n.T("toast_sending_dm"))
 
         comment_id = value.get("comment_id")
         record = pending_get(comment_id)
         if not record:
-            return toast("warning", "这条已经处理过了")
+            return toast("warning", i18n.T("toast_handled"))
 
         if kind == "ignore":
             pending_drop(comment_id)
-            log("  → 人工选择「忽略」，未发布")
+            log("  → Manually selected \"Ignore\", not published")
             done = feishu.build_done_card(record["event"], record["suggestion"],
-                                          "**已忽略** —— 未发布任何回复。", tone="grey")
-            done["header"]["title"]["content"] = "✅ 已处理（忽略）· %s" % (
-                (record["event"].get("page") or {}).get("name") or "未知主页")
-            _finish_card(message_id, done, "忽略", to=record.get("chat_id"))
-            return toast("success", "已忽略")
+                                          i18n.T("result_ignored"), tone="grey")
+            done["header"]["title"]["content"] = i18n.T("done_ignored") % (
+                (record["event"].get("page") or {}).get("name") or i18n.T("unknown_page"))
+            _finish_card(message_id, done, "Ignore", to=record.get("chat_id"))
+            return toast("success", i18n.T("toast_ignored"))
 
         if kind == "send":
             text = (form.get("edited_reply") or "").strip()
             if not text:
-                log("  ⛔ 表单里没有正文（form_value 为空），未发布")
-                return toast("error", "回复正文是空的")
+                log("  ⛔ No body in the form (form_value is empty), not published")
+                return toast("error", i18n.T("empty_reply"))
             page_id = record["page_id"]
 
             # 【关键】先摘除队列记录，再发帖。
@@ -390,12 +389,12 @@ def on_card_action(data):
                 target=_do_send,
                 args=(record, comment_id, page_id, text, message_id, record.get("chat_id")),
                 daemon=True).start()
-            return toast("info", "正在发送…")
+            return toast("info", i18n.T("toast_sending"))
 
-        return toast("info", "未知操作")
+        return toast("info", i18n.T("toast_unknown"))
     except Exception as exc:
-        log("卡片回调异常: %r" % (exc,))
-        return toast("error", "处理出错，请重试")
+        log("Card callback error: %r" % (exc,))
+        return toast("error", i18n.T("toast_error"))
 
 
 def _send_lead_copy(open_id, record):
@@ -406,23 +405,23 @@ def _send_lead_copy(open_id, record):
     """
     text = (record.get("reply_en") or record.get("reply_zh") or "").strip()
     if not text:
-        log("  [WARN] 线索复制：没有可发送的回复原文")
+        log("  [WARN] Lead copy: no reply text to send")
         return
-    body = ("【询盘回复原文 - 可直接复制】\n\n%s\n\n-- %s"
-            % (text, record.get("page_name") or "Meta 询盘"))
+    body = ("[Inquiry reply text - ready to copy]\n\n%s\n\n-- %s"
+            % (text, record.get("page_name") or "Meta inquiry"))
     try:
         out = feishu.send_text_to(open_id, body)
         if out.get("code") == 0:
-            log("  [OK] 已把询盘回复原文私聊发给 %s" % open_id[-8:])
+            log("  [OK] Sent the inquiry reply text to %s via DM" % open_id[-8:])
             return
-        log("  [WARN] 私聊失败 code=%s msg=%s，改为发到群里"
+        log("  [WARN] DM failed code=%s msg=%s, falling back to group"
             % (out.get("code"), out.get("msg")))
     except Exception as exc:
-        log("  [WARN] 私聊异常 %r，改为发到群里" % (exc,))
+        log("  [WARN] DM exception %r, falling back to group" % (exc,))
     try:
         feishu.send_text(body, to=record.get("chat_id"))
     except Exception as exc:
-        log("  [FAIL] 发到群里也失败: %r" % (exc,))
+        log("  [FAIL] Sending to group also failed: %r" % (exc,))
 
 
 # ---------- 飞书私信 ----------
@@ -450,17 +449,17 @@ _chat_queue = queue.Queue()
 _seen_msg_ids = set()
 _seen_msg_lock = threading.Lock()
 
-HELP_TEXT = """可用命令：
-/记住 <内容>   —— 写入长期记忆（跨会话保留，最多 50 条）
-/记忆          —— 查看已记住的内容
-/忘记 <序号>   —— 删除某一条
-/clear         —— 清空本会话上下文（不动长期记忆）
-/help          —— 显示这条
+HELP_TEXT = """Available commands:
+/remember <content>   -- write to long-term memory (persists across sessions, max 50 entries)
+/memory          -- view remembered content
+/forget <index>   -- delete an entry
+/clear         -- clear this session's context (long-term memory untouched)
+/help          -- show this message
 
-其他内容直接发给 AI 助手：
-模型走 FreeLLMAPI 免费池（auto 路由），失败时兜底 DeepSeek 官方。
+Anything else goes straight to the AI assistant:
+The model uses the FreeLLMAPI free pool (auto routing), with DeepSeek official as fallback on failure.
 
-注意：长期记忆会随每次对话一并发给该模型，请不要放密码、密钥、客户联系方式。"""
+Note: long-term memory is sent to the model with every conversation, so don't put passwords, keys, or customer contact info in it."""
 
 
 def _msg_first_seen(event_id):
@@ -498,32 +497,32 @@ def on_message(payload):
             text = raw
 
         if not _msg_first_seen(event_id):
-            log("私信重复投递，已忽略 event_id=%s" % event_id)
+            log("Duplicate DM delivery, ignored event_id=%s" % event_id)
             return None
 
         if chat_type != "p2p":
-            log("私信事件非单聊（chat_type=%s），忽略" % chat_type)
+            log("DM event is not a one-on-one chat (chat_type=%s), ignoring" % chat_type)
             return None
 
         if open_id not in feishu.operator_allowlist():
-            log("拒绝：私信来自白名单外 %s" % open_id)
+            log("Rejected: DM from outside whitelist %s" % open_id)
             return None
 
         if msg_type != "text":
-            feishu.send_text_to(open_id, "目前只支持纯文本消息。")
+            feishu.send_text_to(open_id, "Only plain text messages are supported for now.")
             return None
 
         text = (text or "").strip()
         if not text:
             return None
-        log("收到私信 open_id=%s 正文=%s" % (open_id[-8:], text[:120]))
+        log("Received DM open_id=%s body=%s" % (open_id[-8:], text[:120]))
 
         if _handle_command(open_id, text):
             return None
 
         _chat_queue.put((open_id, text))
     except Exception as exc:
-        log("私信入口异常: %r" % (exc,))
+        log("DM entry point error: %r" % (exc,))
     return None
 
 
@@ -531,58 +530,58 @@ def _handle_command(open_id, text):
     """返回 True 表示已作为命令处理，不要再丢给模型。"""
     low = text.lower()
 
-    if low in ("/clear", "/reset") or text == "/重置":
+    if low in ("/clear", "/reset"):
         chat.clear_history(open_id)
-        feishu.send_text_to(open_id, "已清空本会话上下文（长期记忆保留）。")
-        log("  已清空 %s 的上下文" % open_id[-8:])
+        feishu.send_text_to(open_id, "Cleared this session's context (long-term memory retained).")
+        log("  Cleared context for %s" % open_id[-8:])
         return True
 
-    if low in ("/help", "/?", "/帮助"):
+    if low in ("/help", "/?"):
         feishu.send_text_to(open_id, HELP_TEXT)
         return True
 
-    if low in ("/memory", "/mem", "/记忆"):
+    if low in ("/memory", "/mem"):
         items = chat.memory_list(open_id)
         if not items:
-            feishu.send_text_to(open_id, "长期记忆还是空的。\n用 /记住 <内容> 添加。")
+            feishu.send_text_to(open_id, "Long-term memory is still empty.\nUse /remember <content> to add.")
         else:
-            lines = ["长期记忆（%d/%d 条）：" % (len(items), chat.MEM_MAX)]
+            lines = ["Long-term memory (%d/%d entries):" % (len(items), chat.MEM_MAX)]
             for i, item in enumerate(items, 1):
                 lines.append("%d. %s" % (i, item.get("text", "")))
             lines.append("")
-            lines.append("删除：/忘记 <序号>")
+            lines.append("Delete: /forget <index>")
             feishu.send_text_to(open_id, "\n".join(lines))
         return True
 
-    for prefix in ("/remember", "/记住"):
+    for prefix in ("/remember",):
         if low.startswith(prefix) or text.startswith(prefix):
             body = text[len(prefix):].strip()
             if not body:
                 feishu.send_text_to(
-                    open_id, "用法：/记住 <内容>\n例如：/记住 我在华东做机电设备贸易")
+                    open_id, "Usage: /remember <content>\nExample: /remember I trade electromechanical equipment in East China")
                 return True
             ok, count, err = chat.memory_add(open_id, body)
             if not ok:
-                feishu.send_text_to(open_id, "没记住：%s" % err)
+                feishu.send_text_to(open_id, "Not remembered: %s" % err)
             else:
-                msg = "已记住（第 %d/%d 条）：\n%s" % (count, chat.MEM_MAX, body[:120])
+                msg = "Remembered (entry %d/%d):\n%s" % (count, chat.MEM_MAX, body[:120])
                 if count == 1:
-                    msg += ("\n\n⚠️ 提醒：这条会随每次对话发给第三方模型（免费池），"
-                            "请不要放密码、密钥、客户联系方式。")
+                    msg += ("\n\n⚠️ Note: this will be sent to third-party models (free pool) with every conversation,"
+                            "so please don't include passwords, keys, or customer contact details.")
                 feishu.send_text_to(open_id, msg)
-                log("  写入记忆 %s 第 %d 条" % (open_id[-8:], count))
+                log("  Wrote memory %s entry %d" % (open_id[-8:], count))
             return True
 
-    for prefix in ("/forget", "/忘记"):
+    for prefix in ("/forget",):
         if low.startswith(prefix) or text.startswith(prefix):
             body = text[len(prefix):].strip()
             if not body.isdigit():
-                feishu.send_text_to(open_id, "用法：/忘记 <序号>（序号见 /记忆）")
+                feishu.send_text_to(open_id, "Usage: /forget <index> (see /memory for indexes)")
                 return True
             ok, detail = chat.memory_del(open_id, int(body))
             feishu.send_text_to(open_id, detail)
             if ok:
-                log("  删除记忆 %s 第 %s 条" % (open_id[-8:], body))
+                log("  Deleted memory %s entry %s" % (open_id[-8:], body))
             return True
 
     return False
@@ -598,7 +597,7 @@ def chat_loop():
         try:
             _do_chat(open_id, text)
         except Exception as exc:
-            log("聊天处理异常: %r" % (exc,))
+            log("Chat processing exception: %r" % (exc,))
         finally:
             _chat_queue.task_done()
 
@@ -612,20 +611,20 @@ def _do_chat(open_id, text):
         answer, meta = chat.reply(messages)
     except Exception as exc:
         chat.save_history(open_id, history)
-        log("  [FAIL] 生成失败: %r" % (exc,))
-        feishu.send_text_to(open_id, "生成失败：\n%s" % str(exc)[:280])
+        log("  [FAIL] Generation failed: %r" % (exc,))
+        feishu.send_text_to(open_id, "Generation failed:\n%s" % str(exc)[:280])
         return
     history.append({"role": "assistant", "content": answer})
     chat.save_history(open_id, history)
-    body = answer if len(answer) <= 4000 else answer[:4000] + "\n...(过长已截断)"
+    body = answer if len(answer) <= 4000 else answer[:4000] + "\n...(truncated, too long)"
     out = feishu.send_text_to(open_id, body)
     ok = (out.get("code") == 0)
-    log("  [%s] 已回复 %s | %.1fs via=%s model=%s tokens=%s%s"
+    log("  [%s] Replied %s | %.1fs via=%s model=%s tokens=%s%s"
         % ("OK" if ok else "WARN", open_id[-8:], time.time() - t0,
            meta.get("via"), meta.get("model"), meta.get("total_tokens"),
-           "（已降级兜底）" if meta.get("fell_back") else ""))
+           "(degraded fallback)" if meta.get("fell_back") else ""))
     if not ok:
-        log("  [WARN] 飞书发送失败 code=%s msg=%s" % (out.get("code"), out.get("msg")))
+        log("  [WARN] Feishu send failed code=%s msg=%s" % (out.get("code"), out.get("msg")))
 
 
 def build_lark_client():
@@ -638,20 +637,20 @@ def build_lark_client():
 def self_check():
     kb = kbase.load(None)
     print("  POST_ENABLED   : %s" % config.POST_ENABLED)
-    print("  模型           : %s" % config.MODEL)
+    print("  Model          : %s" % config.MODEL)
     print("  spool          : %s" % config.SPOOL_FILE)
-    print("  KB 已确认事实  : %d 条%s" % (len(kb["facts"]), "（空 —— 模型不会陈述任何产品信息）" if kb["facts_empty"] else ""))
-    print("  KB 禁止陈述    : %d 条" % len(kb["forbid"]))
-    print("  审核白名单     : %s" % ", ".join(sorted(feishu.operator_allowlist())) or "（空）")
-    print("  推送目标 chat  : %s" % feishu.chat_id())
-    print("  lark SDK       : %s" % ("已加载（精简垫片）" if LARK_OK else "不可用: %r" % _LARK_ERROR))
+    print("  KB confirmed facts  : %d items%s" % (len(kb["facts"]), "(empty — the model will not state any product information)" if kb["facts_empty"] else ""))
+    print("  KB forbidden statements    : %d items" % len(kb["forbid"]))
+    print("  Review whitelist     : %s" % ", ".join(sorted(feishu.operator_allowlist())) or "(empty)")
+    print("  Push target chat  : %s" % feishu.chat_id())
+    print("  lark SDK       : %s" % ("Loaded (minimal shim)" if LARK_OK else "Unavailable: %r" % _LARK_ERROR))
     ids = _token_page_ids()
     if not ids:
-        print("  主页令牌复核    : 跳过（%s 下无令牌）" % config.GRAPH_SECRETS)
+        print("  Homepage token recheck    : skipped (no token under %s)" % config.GRAPH_SECRETS)
     for pid in ids:
         ok, me = graph.verify_identity(pid)
-        print("  %s 令牌身份复核: %s（/me 返回 %s / %s）" % (
-            pid, "✅ 是主页身份" if ok else "❌ 不符",
+        print("  %s token identity recheck: %s (/me returned %s / %s)" % (
+            pid, "✅ Is homepage identity" if ok else "❌ Mismatch",
             me.get("id"), me.get("name")))
 
 
@@ -668,11 +667,11 @@ def main():
         self_check()
         return
     log("=" * 60)
-    log("Lead Pulse Guard worker 启动")
-    log("  模型=%s  POST_ENABLED=%s" % (config.MODEL, config.POST_ENABLED))
+    log("Lead Pulse Guard worker starting")
+    log("  model=%s  POST_ENABLED=%s" % (config.MODEL, config.POST_ENABLED))
     kb = kbase.load(None)
-    log("  知识库：已确认事实 %d 条%s" % (
-        len(kb["facts"]), "（空）" if kb["facts_empty"] else ""))
+    log("  Knowledge base: %d confirmed facts%s" % (
+        len(kb["facts"]), "(empty)" if kb["facts_empty"] else ""))
     log("=" * 60)
     stop = threading.Event()
     t = threading.Thread(target=tail_loop, args=(stop,), daemon=True)

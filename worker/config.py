@@ -42,6 +42,10 @@ MAX_CONSECUTIVE_FAILURES = int(os.environ.get("AIW_MAX_FAILURES", "15"))
 PENDING_LEAD_TTL_DAYS = int(os.environ.get("AIW_LEAD_TTL_DAYS", "15"))
 DEDUP_TTL = 6 * 3600
 
+# 主页语言：声明语言的主页走该语言的提示词；
+# 未声明时的回退。en 是开源默认值；
+# 设 AIW_DEFAULT_PAGE_LANGUAGE=zh 可让中文主页走中文提示词。
+DEFAULT_PAGE_LANGUAGE = os.environ.get("AIW_DEFAULT_PAGE_LANGUAGE", "en").strip().lower() or "en"
 
 def read_secret(name, base=SECRETS):
     with open(os.path.join(base, name), "r", encoding="utf-8") as handle:
@@ -112,7 +116,8 @@ def pages():
             data = json.load(handle)
         if isinstance(data, dict) and data:
             return [(str(pid), (val or {}).get("name") or str(pid),
-                     (val or {}).get("kb") or "")
+                     (val or {}).get("kb") or "",
+                     (val or {}).get("lang") or DEFAULT_PAGE_LANGUAGE)
                     for pid, val in data.items()]
     except FileNotFoundError:
         pass
@@ -123,5 +128,25 @@ def pages():
         names = sorted(os.listdir(GRAPH_SECRETS))
     except OSError:
         return []
-    return [(n[len("page-token-"):], n[len("page-token-"):], "")
+    return [(n[len("page-token-"):], n[len("page-token-"):], "", DEFAULT_PAGE_LANGUAGE)
             for n in names if n.startswith("page-token-")]
+
+
+def page_language(page_id):
+    """返回指定主页的语言代码（zh / en）。未声明时回退到 DEFAULT_PAGE_LANGUAGE。"""
+    config_file = os.environ.get("PAGES_CONFIG_FILE",
+                                 os.path.join(SECRETS, "pages.json"))
+    try:
+        with open(config_file, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        if isinstance(data, dict) and data:
+            val = data.get(str(page_id))
+            if isinstance(val, dict):
+                lang = (val.get("lang") or "").strip().lower()
+                if lang:
+                    return lang
+    except (FileNotFoundError, OSError):
+        pass
+    except Exception:
+        pass
+    return DEFAULT_PAGE_LANGUAGE

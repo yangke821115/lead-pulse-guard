@@ -95,7 +95,7 @@ def main():
 
     failed, seen, fresh = 0, 0, []
 
-    for page_id, page_name, kb in PAGES:
+    for page_id, page_name, kb, _lang in PAGES:
         try:
             page_token = token_for(page_id)
         except Exception as exc:

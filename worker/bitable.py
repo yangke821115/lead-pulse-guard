@@ -23,7 +23,7 @@ def _records_path(suffix=""):
 def create_record(fields):
     out = _api(_records_path(), {"fields": fields})
     if out.get("code") != 0:
-        raise RuntimeError("写多维表格失败: %s"
+        raise RuntimeError("Failed to write Bitable record: %s"
                            % json.dumps(out, ensure_ascii=False)[:300])
     return (out.get("data") or {}).get("record", {}).get("record_id")
 

@@ -74,20 +74,20 @@ def as_prompt_block(kb):
     """把知识库渲染成给模型看的文本。空的事实库要显式标成空的。"""
     if kb["facts_empty"]:
         facts_text = (
-            "（本栏为空。你目前【没有任何】经过确认的产品信息，\n"
-            "因此不得对产品作任何具体陈述 —— 包括不限于：规格、认证、\n"
-            "保修期、产地、性能、价格、交期。只能引导对方索取详细资料。）"
+            "(This section is empty. You currently have NO confirmed product information,\n"
+            "so you must not make any specific product claims — including but not limited to: specifications, certifications,\n"
+            "warranty, origin, performance, price, lead time. Only invite the customer to request detailed information.)"
         )
     else:
         facts_text = "\n".join("- " + f for f in kb["facts"])
 
     forbid_text = ("\n".join("- " + f for f in kb["forbid"])
-                   if kb["forbid"] else "（无额外条目）")
+                   if kb["forbid"] else "(no additional entries)")
     style_text = ("\n".join("- " + s for s in kb["style"])
-                  if kb["style"] else "（无额外条目）")
+                  if kb["style"] else "(no additional entries)")
 
     return (
-        "## 知识库 · 已确认事实（唯一可引用来源）\n%s\n\n"
-        "## 知识库 · 禁止陈述\n%s\n\n"
-        "## 知识库 · 语气偏好\n%s" % (facts_text, forbid_text, style_text)
+        "## KB · Confirmed facts (the only citable source)\n%s\n\n"
+        "## KB · Do not state\n%s\n\n"
+        "## KB · Tone preferences\n%s" % (facts_text, forbid_text, style_text)
     )

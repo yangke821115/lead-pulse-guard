@@ -13,14 +13,14 @@ import json, os, threading, time, urllib.request
 
 from . import config
 
-SYSTEM_PROMPT = """你是用户通过飞书私信对话的 AI 助手。
+SYSTEM_PROMPT = """You are an AI assistant chatting with the user through Lark direct messages.
 
-- 默认用中文回复；用户用其他语言提问时跟随用户的语言。
-- 直接回答问题。不要客套开场，不要复述用户的话，不要问「还有什么可以帮您」。
-- 不确定就说不确定，绝不编造事实、数字、链接或引文。
-- 回答尽量简洁。用户明确要求展开时才写长。
-- 输出纯文本。飞书的文本消息不渲染 Markdown，所以用简单符号和换行排版，
-  不要用 **加粗**、# 标题 这类语法。
+- Reply in the user's language; default to English when it is unclear.
+- Answer the question directly. No pleasantries, no restating the user's message, no "anything else I can help with".
+- If you are unsure, say so. Never invent facts, numbers, links, or quotes.
+- Keep answers concise. Write more only when the user explicitly asks.
+- Output plain text. Lark text messages do not render Markdown, so use simple symbols and line breaks,
+  not **bold** or # headings.
 """
 
 _HIST_MAX = 24          # 每个用户保留的最大消息条数（user + assistant 合计）
@@ -32,7 +32,7 @@ _mem_lock = threading.Lock()
 
 
 def system_message(open_id=None):
-    body = SYSTEM_PROMPT + "\n\n当前时间：%s（北京时间）" % time.strftime("%Y-%m-%d %H:%M %A")
+    body = SYSTEM_PROMPT + "\n\nCurrent time: %s (Beijing time)" % time.strftime("%Y-%m-%d %H:%M %A")
     if open_id:
         block = _memory_block(open_id)
         if block:
@@ -110,14 +110,14 @@ def memory_add(open_id, text):
     """返回 (ok, count, err)。"""
     text = " ".join((text or "").split())
     if not text:
-        return False, 0, "内容为空"
+        return False, 0, "Content is empty"
     if len(text) > _MEM_CHARS:
         text = text[:_MEM_CHARS]
     with _mem_lock:
         data = _read_mem()
         items = data.get(open_id) or []
         if len(items) >= MEM_MAX:
-            return False, len(items), "已达上限 %d 条，请先用 /忘记 <序号> 删掉旧的" % MEM_MAX
+            return False, len(items), "Reached the limit of %d entries; use /forget <index> to remove old ones" % MEM_MAX
         items.append({"text": text, "at": time.strftime("%Y-%m-%d %H:%M")})
         data[open_id] = items
         _write_mem(data)
@@ -130,21 +130,21 @@ def memory_del(open_id, index):
         data = _read_mem()
         items = data.get(open_id) or []
         if not items:
-            return False, "长期记忆还是空的。"
+            return False, "Long-term memory is empty."
         if index < 1 or index > len(items):
-            return False, "序号超出范围（当前 %d 条）。" % len(items)
+            return False, "Index out of range (currently %d entries)." % len(items)
         removed = items.pop(index - 1).get("text", "")
         data[open_id] = items
         _write_mem(data)
-        return True, "已删除第 %d 条：\n%s" % (index, removed[:80])
+        return True, "Deleted entry %d:\n%s" % (index, removed[:80])
 
 
 def _memory_block(open_id):
     items = memory_list(open_id)
     if not items:
         return ""
-    lines = ["\n\n# 长期记忆（用户此前让你记住的）\n\n",
-             "回答时可以自然地使用这些信息；不要主动背诵整份清单。\n\n"]
+    lines = ["\n\n# Long-term memory (things the user asked you to remember)\n\n",
+             "Use this naturally when answering; do not recite the whole list.\n\n"]
     for i, item in enumerate(items, 1):
         lines.append("%d. %s\n" % (i, item.get("text", "")))
     return "".join(lines)
@@ -180,10 +180,10 @@ def _attempt(messages, url, keyname, model, timeout, extra=None):
 
     # 推理模型把预算吃光时正文会是空的，且 HTTP 仍是 200 —— 必须显式判失败
     if not content:
-        raise RuntimeError("空内容 finish_reason=%r reasoning_tokens=%s usage=%r"
+        raise RuntimeError("Empty content: finish_reason=%r reasoning_tokens=%s usage=%r"
                            % (finish, reasoning, usage))
     if finish == "length":
-        content += "\n\n（⚠️ 达到输出上限，回答被截断）"
+        content += "\n\n(⚠️ output limit reached; the answer was truncated)"
     return content, usage
 
 
@@ -213,4 +213,4 @@ def reply(messages):
                      "seconds": round(time.time() - t0, 1),
                      "fell_back": bool(attempts), "attempts": attempts})
         return text, meta
-    raise RuntimeError("重试链全部 %d 次失败：%s" % (len(plan), attempts))
+    raise RuntimeError("Retry chain failed after %d attempts: %s" % (len(plan), attempts))
