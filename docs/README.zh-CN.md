@@ -247,7 +247,7 @@ MIT 许可，并且会一直是。
 | GitHub Sponsors | 尚未开通 | 定期，海外 |
 | 对公转账 / 开票 | 按需 | 需要发票的公司 |
 
-支付宝不是卡支付，没法在仓库里做成一个按钮，所以只能写地址：直接在支付宝 App 里转给上面这个邮箱。
+支付宝不是卡支付，GitHub 也没有这个字段，所以做不成仓库里的按钮。页面右上角的 **Sponsor** 按钮会跳到 [leadpulseguard.com#sponsor](https://leadpulseguard.com#sponsor)，那一页写着同一个账号。转账就在支付宝 App 里转给上面这个邮箱。
 
 **需要发票的公司请走对公转账**，不要直接支付宝转账 —— 那样两边都不好做账。GitHub Sponsors 或对公转账，开个 issue 我们会跟进。
 

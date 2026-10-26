@@ -235,8 +235,9 @@ matched up. Any amount, one-off. There is no recurring billing and nothing to si
 | GitHub Sponsors | not live yet | recurring, international |
 | Invoice / 对公转账 | on request | companies that need a receipt |
 
-Alipay is not a card payment, so it cannot be embedded as a button in the repository. Transfer from the Alipay
-app or scan the address at [leadpulseguard.com](https://leadpulseguard.com#sponsor).
+Alipay is not a card payment and GitHub has no field for it, so it cannot be a button in the repository. The
+**Sponsor** button in the header points at [leadpulseguard.com#sponsor](https://leadpulseguard.com#sponsor),
+where the same account is published. Transfer from the Alipay app to the address above.
 
 For GitHub Sponsors, 爱发电, or an invoice — open an issue and we will follow up. Companies that need a receipt
 should ask for an invoice rather than sending an Alipay transfer, so the accounting works on both sides.
