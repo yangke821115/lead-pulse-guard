@@ -10,19 +10,23 @@ Two processes, one shared directory. That is the whole topology. It is deliberat
 
 ```
 /opt/leadpulse/
+├── docker-compose.yml
 ├── gateway/
 │   ├── app.py
 │   ├── Dockerfile
-│   ├── docker-compose.yml
 │   └── requirements.txt
-├── worker/
-│   ├── run.py
-│   └── worker/{config,spool,llm,chat,graph,kbase,worker}.py
+├── worker/                      this directory *is* the `worker` package
+│   ├── main.py                  entry point: python -m worker.main
+│   ├── requirements.txt
+│   ├── prompts/*.en.txt
+│   └── {config,spool,llm,chat,graph,kbase,worker,leads,leadstore,
+│        leadpoll,commentpoll,mail,feishu,larklite,i18n,bitable}.py
 ├── kb/
 │   └── <slug>/{confirmed-facts,do-not-state,style-notes,internal-notes}.md
 └── venv/
 
-/etc/leadpulse/                0700 root:root
+/etc/leadpulse/                0750 root:<service-group>
+├── pages.json                 0640 root:<service-group>
 ├── meta-app-secret            0600 root:root
 ├── page-token-<page-id>       0640 root:<service-group>
 ├── chat-app-id                0600 root:root
@@ -98,8 +102,8 @@ Type=simple
 User=leadpulse
 Group=leadpulse
 SupplementaryGroups=leadpulse-secrets
-WorkingDirectory=/opt/leadpulse/worker
-ExecStart=/opt/leadpulse/venv/bin/python /opt/leadpulse/worker/run.py
+WorkingDirectory=/opt/leadpulse
+ExecStart=/opt/leadpulse/venv/bin/python -m worker.main
 
 Environment=AIW_POST_ENABLED=true
 Environment=AIW_MODEL=your-model-name

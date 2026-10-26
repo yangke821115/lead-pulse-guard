@@ -6,8 +6,7 @@ Most comment-automation tools are fully automatic. That is fine for a restaurant
 
 Lead Pulse Guard is built around one rule: **the model proposes, a human disposes.**
 
-> **Chinese edition:** in progress. The link below is a placeholder until the translation is published.
-> [中文说明 / Chinese README](docs/README.zh-CN.md)
+> **中文说明：** [docs/README.zh-CN.md](docs/README.zh-CN.md) — 面向业务场景与部署，和技术版的侧重不同。
 
 ---
 
@@ -122,6 +121,10 @@ replacement for the webhook — the webhook is still faster. The poller only bou
 - [x] Spool tailer with persisted offset (survives restart, handles rotation)
 - [x] Lead-event path: field extraction, scoring, business-unit routing, optional table write
 - [x] Form option mapping kept in an external JSON file — no customer field names in the source
+- [x] Per-page knowledge-base loading
+- [x] LLM call with a retry chain (cheap pool first, paid fallback second)
+- [x] Strict JSON output with a self-check block (`answers_question`, `invented_specifics`)
+- [x] Approval card push with three buttons
 - [x] Response-before-acting callback handling (avoids the "server didn't respond" retry that causes double-posting)
 - [x] Dry-run switch, on by default
 
@@ -130,16 +133,12 @@ replacement for the webhook — the webhook is still faster. The poller only bou
 - [x] Comment poller: re-signs each comment as a webhook and posts it to the gateway, so eligibility stays in one place
 - [x] Atomic claim on the activity ID — webhook and poller can race, only one card is produced
 - [x] `--dry-run` on both: report what is missing without processing it
-- [x] Email path (`worker/mail.py`): read-only IMAP polling, never marks mail as read
-- [x] Email classification: spam triage first, then business-unit routing by content rather than by inbox
-- [x] Email dedupe across restarts (UID watermark + Message-ID set), first run establishes a baseline instead of backfilling history
+
+**Email channel** (`worker/mail.py`)
+- [x] Read-only IMAP polling — every fetch uses `BODY.PEEK`, so mail is never marked read, moved or deleted
+- [x] Spam triage first, then business-unit routing by content rather than by inbox
+- [x] Dedupe across restarts (UID watermark + Message-ID set); the first run establishes a baseline instead of backfilling history
 - [x] Outbound mail detection — our own sent mail is not treated as an inbound lead
-- [x] Per-page knowledge-base loading
-- [x] LLM call with a retry chain (cheap pool first, paid fallback second)
-- [x] Strict JSON output with a self-check block (`answers_question`, `invented_specifics`)
-- [x] Approval card push with three buttons
-- [x] Response-before-acting callback handling (avoids the "server didn't respond" retry that causes double-posting)
-- [x] Dry-run switch, on by default
 
 ---
 
@@ -150,7 +149,9 @@ git clone https://github.com/<you>/lead-pulse-guard.git
 cd lead-pulse-guard
 
 cp .env.example .env
-# fill in META_APP_SECRET, META_VERIFY_TOKEN, PAGE_REGISTRY
+# fill in META_APP_SECRET and META_VERIFY_TOKEN
+cp pages.example.json pages.json
+# then put your real Page IDs in pages.json
 
 docker compose up -d gateway
 docker compose logs -f gateway
@@ -161,9 +162,14 @@ Point your Meta app's webhook at `https://your-domain/webhook`, subscribe to the
 Then start the worker:
 
 ```bash
-python3 -m venv venv && ./venv/bin/pip install -r requirements.txt
-AIW_POST_ENABLED=false ./venv/bin/python run.py
+python3 -m venv venv
+./venv/bin/pip install -r worker/requirements.txt
+./venv/bin/python -m worker.main
 ```
+
+`worker/requirements.txt` is the only dependency file — the rest is standard library. The worker ships a
+minimal Feishu SDK shim so the official client does not load every REST endpoint at import time (measured to
+save about 120 MB resident).
 
 With `AIW_POST_ENABLED=false` the Send button reports "simulated send" and nothing reaches Facebook. Flip it to `true` only after you have watched a few drafts come through.
 
@@ -220,16 +226,20 @@ Sponsorship pays for the parts that nobody enjoys doing and everybody depends on
 
 ### How to sponsor
 
-The repository is being prepared for its first public release, so the sponsorship pages are not live yet. Planned
-channels:
+**Alipay** is live today — send to `yangke821115@gmail.com`. Put "lead-pulse-guard" in the note so it can be
+matched up. Any amount, one-off. There is no recurring billing and nothing to sign up for.
 
-| Channel | Suited to |
-|---|---|
-| GitHub Sponsors | recurring, international |
-| 爱发电 | recurring / one-off, mainland China |
-| Invoice / 对公转账 | companies that need a receipt |
+| Channel | Status | Suited to |
+|---|---|---|
+| **Alipay** — `yangke821115@gmail.com` | **available now** | one-off, mainland China |
+| GitHub Sponsors | not live yet | recurring, international |
+| Invoice / 对公转账 | on request | companies that need a receipt |
 
-If you want to support it before those are live, open an issue — we will follow up.
+Alipay is not a card payment, so it cannot be embedded as a button in the repository. Transfer from the Alipay
+app or scan the address at [leadpulseguard.com](https://leadpulseguard.com#sponsor).
+
+For GitHub Sponsors, 爱发电, or an invoice — open an issue and we will follow up. Companies that need a receipt
+should ask for an invoice rather than sending an Alipay transfer, so the accounting works on both sides.
 
 ### For companies
 
