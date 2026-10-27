@@ -35,6 +35,38 @@ kb/*
 worker/kb/*
 !worker/kb/example/
 
+
+# ── 2026-10-27 补漏（审计 P0-1 / C8）──────────────────────────────────────
+# SQLite WAL/SHM：worker/leadstore.py 启用 journal_mode=WAL。
+# WAL 在 checkpoint 前含全部未落盘数据：客户姓名/邮箱/电话/公司/AI 原文。
+# 现有 *.db 匹配不到 *.db-wal（gitignore 的 * 不做前缀匹配）。
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+
+# spool / filtered 日志：原始事件，含客户评论与询盘正文
+*.jsonl
+
+# env 变体：现有 .env 只匹配裸文件名
+.env.*
+!.env.example
+*.env
+
+# 凭据文件名：代码实际读取的裸名字（*-app-secret 漏了裸 app-secret）
+app-secret
+feishu-app-id
+feishu-app-secret
+feishu-chat-id
+operator-allowlist
+
+# 本地覆盖与编辑器
+docker-compose.override.yml
+*.bak
+*.swp
+.idea/
+.vscode/
+
 # OS
 .DS_Store
 Thumbs.db
