@@ -429,20 +429,6 @@ def _send_lead_copy(open_id, record):
 _seen_msg_ids = set()
 _seen_msg_lock = threading.Lock()
 
-
-def _msg_first_seen(event_id):
-    """飞书会重投事件；按 event_id 去重，防止同一条消息回两遍。"""
-    if not event_id:
-        return True
-    with _seen_msg_lock:
-        if event_id in _seen_msg_ids:
-            return False
-        _seen_msg_ids.add(event_id)
-        if len(_seen_msg_ids) > 500:
-            _seen_msg_ids.clear()
-        return True
-
-
 # ---------- 飞书私信：自由对话 ----------
 
 _chat_queue = queue.Queue()
