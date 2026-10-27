@@ -446,8 +446,6 @@ def _msg_first_seen(event_id):
 # ---------- 飞书私信：自由对话 ----------
 
 _chat_queue = queue.Queue()
-_seen_msg_ids = set()
-_seen_msg_lock = threading.Lock()
 
 HELP_TEXT = """Available commands:
 /remember <content>   -- write to long-term memory (persists across sessions, max 50 entries)
