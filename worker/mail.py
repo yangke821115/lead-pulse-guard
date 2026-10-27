@@ -115,6 +115,15 @@ def load_accounts():
             "page_id": str(acct.get("page_id") or ""),
             "label": acct.get("label") or acct["address"],
         })
+    # ── 有账号配置但没设 IMAP 主机 → 显式失败 ──────────────────────
+    # 以前默认值写死成某家服务商，等于「没配置就静默连别人家的服务器」。
+    # 现在宁可启动失败，也不猜。
+    if out and not IMAP_HOST.strip():
+        raise RuntimeError(
+            "AIW_MAIL_IMAP_HOST is empty but %d mail account(s) are configured in %s. "
+            "Set it to your provider's IMAP host (e.g. imap.gmail.com), "
+            "or remove that file to disable mail monitoring."
+            % (len(out), ACCOUNTS_FILE))
     return out
 
 
