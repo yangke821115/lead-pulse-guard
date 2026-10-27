@@ -237,9 +237,6 @@ Alipay is not a card payment and GitHub has no field for it, so it cannot be a b
 **Sponsor** button in the header points at [leadpulseguard.com#sponsor](https://leadpulseguard.com#sponsor),
 where the same account is published. Transfer from the Alipay app to the address above.
 
-For GitHub Sponsors, 爱发电, or an invoice — open an issue and we will follow up. Companies that need a receipt
-should ask for an invoice rather than sending an Alipay transfer, so the accounting works on both sides.
-
 ### For companies
 
 If you run B2B lead generation on Facebook or by email and want this adapted to your own Pages and mailboxes, we do
