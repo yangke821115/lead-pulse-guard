@@ -232,8 +232,6 @@ matched up. Any amount, one-off. There is no recurring billing and nothing to si
 | Channel | Status | Suited to |
 |---|---|---|
 | **Alipay** — `yangke821115@gmail.com` | **available now** | one-off, mainland China |
-| GitHub Sponsors | not live yet | recurring, international |
-| Invoice / 对公转账 | on request | companies that need a receipt |
 
 Alipay is not a card payment and GitHub has no field for it, so it cannot be a button in the repository. The
 **Sponsor** button in the header points at [leadpulseguard.com#sponsor](https://leadpulseguard.com#sponsor),
