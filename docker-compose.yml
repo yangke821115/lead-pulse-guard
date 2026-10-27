@@ -60,15 +60,17 @@ services:
     volumes:
       - ./data/state:/var/lib/leadpulse/state
       - ./secrets:/etc/leadpulse:ro
-    environment:
-      LPW_BASE: /app/worker
-      LPW_SECRETS: /etc/leadpulse
-      LPW_STATE: /var/lib/leadpulse/state
-      AIW_MAIL_STATE: /var/lib/leadpulse/state/mail
-      AIW_MAIL_ACCOUNTS: /etc/leadpulse/mail-accounts.json
-      AIW_MAIL_POLL: ${AIW_MAIL_POLL:-600}
-      AIW_MAIL_OWN_DOMAINS: ${AIW_MAIL_OWN_DOMAINS:-}
-    logging:
+environment:
+    LPW_BASE: /app/worker
+    LPW_SECRETS: /etc/leadpulse
+    LPW_STATE: /var/lib/leadpulse/state
+    AIW_MAIL_STATE: /var/lib/leadpulse/state/mail
+    AIW_MAIL_ACCOUNTS: /etc/leadpulse/mail-accounts.json
+    AIW_MAIL_IMAP_HOST: ${AIW_MAIL_IMAP_HOST:-}
+    AIW_MAIL_IMAP_PORT: ${AIW_MAIL_IMAP_PORT:-993}
+    AIW_MAIL_POLL: ${AIW_MAIL_POLL:-600}
+    AIW_MAIL_OWN_DOMAINS: ${AIW_MAIL_OWN_DOMAINS:-}
+logging:
       driver: json-file
       options:
         max-size: "10m"
