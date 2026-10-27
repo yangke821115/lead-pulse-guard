@@ -39,7 +39,7 @@ STATE_DIR = _state_dir()
 STATE_FILE = os.path.join(STATE_DIR, "state.json")
 FILTERED_LOG = os.path.join(STATE_DIR, "filtered.jsonl")
 
-IMAP_HOST = os.environ.get("AIW_MAIL_IMAP_HOST", "imap.exmail.qq.com")
+IMAP_HOST = os.environ.get("AIW_MAIL_IMAP_HOST", "")
 IMAP_PORT = int(os.environ.get("AIW_MAIL_IMAP_PORT", "993"))
 ACCOUNTS_FILE = os.environ.get(
     "AIW_MAIL_ACCOUNTS", os.path.join(config.SECRETS, "mail-accounts.json"))
